@@ -13,7 +13,7 @@ namespace Ruri.ShaderDecompiler
         {
             if (args.Length < 1)
             {
-                Console.WriteLine("Usage: UniversalShaderToolkit.exe <input> [mode] [output] [--keep-temps]");
+                Console.WriteLine("Usage: ShaderDecompiler.exe <input> [mode] [output] [--keep-temps]");
                 return 1;
             }
 
