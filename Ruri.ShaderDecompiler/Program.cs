@@ -21,10 +21,16 @@ namespace Ruri.ShaderDecompiler
             string mode = args.Length > 1 ? args[1] : "";
             string? outputPath = args.Length > 2 ? args[2] : null;
             bool keepTemps = false;
+            string? scanAssetsPath = null;
 
             for (int i = 1; i < args.Length; i++)
             {
                 if (args[i] == "--keep-temps") keepTemps = true;
+                else if (args[i] == "--scan-assets" && i + 1 < args.Length)
+                {
+                    scanAssetsPath = args[i + 1];
+                    i++; // Skip next arg
+                }
                 else if (args[i].StartsWith("-")) mode = args[i];
                 else if (args[i] != inputPath) outputPath = args[i];
             }
@@ -38,7 +44,7 @@ namespace Ruri.ShaderDecompiler
             // Handle .ushaderlib
             if (inputPath.EndsWith(".ushaderlib", StringComparison.OrdinalIgnoreCase))
             {
-                return ProcessUnrealLibrary(inputPath, outputPath, keepTemps);
+                return ProcessUnrealLibrary(inputPath, outputPath, keepTemps, scanAssetsPath);
             }
 
             // Legacy single file mode logic
@@ -80,10 +86,25 @@ namespace Ruri.ShaderDecompiler
             }
         }
 
-        static int ProcessUnrealLibrary(string inputPath, string? outputPath, bool keepTemps)
+        static int ProcessUnrealLibrary(string inputPath, string? outputPath, bool keepTemps, string? scanAssetsPath)
         {
             try 
             {
+                Dictionary<int, string> nameMap = new();
+                if (!string.IsNullOrEmpty(scanAssetsPath))
+                {
+                    try
+                    {
+                        var manager = new MaterialShaderManager();
+                        manager.ScanMaterials(scanAssetsPath);
+                        nameMap = manager.ShaderIndexToNameMap;
+                    }
+                    catch(Exception ex)
+                    {
+                         Console.WriteLine($"[Warning] Material scan failed: {ex.Message}");
+                    }
+                }
+
                 var lib = UnrealShaderLibraryReader.Read(inputPath);
                 Console.WriteLine($"Read Library: {lib.Version} Version, {lib.ShaderEntries.Length} shaders.");
                 
@@ -112,7 +133,25 @@ namespace Ruri.ShaderDecompiler
                         var res = decompiler.Decompile(code, ShaderFormat.Unknown, null, 50);
                         if (res.Success)
                         {
-                            File.WriteAllText(Path.Combine(outputPath, $"Shader_{i}.hlsl"), res.HlslSource);
+                            string outName = $"Shader_{i}.hlsl";
+                            
+                            // Valid name sources order: 
+                            // 1. Binary embedded name (Key 'n') - usually missing in Shipping
+                            // 2. Material Asset Map
+                            
+                            if (!string.IsNullOrEmpty(res.ShaderName))
+                            {
+                                string safeName = string.Join("_", res.ShaderName.Split(Path.GetInvalidFileNameChars()));
+                                outName = $"{safeName}.hlsl";
+                            }
+                            else if (nameMap.ContainsKey(i))
+                            {
+                                string mappedName = nameMap[i];
+                                string safeName = string.Join("_", mappedName.Split(Path.GetInvalidFileNameChars()));
+                                outName = $"{safeName}.hlsl";
+                            }
+                            
+                            File.WriteAllText(Path.Combine(outputPath, outName), res.HlslSource);
                             successCount++;
                         }
                         else

@@ -30,6 +30,7 @@ public class DecompileResult
     public string? HlslSource { get; set; }
     public string? ErrorMessage { get; set; }
     public byte[]? IntermediateSpirv { get; set; }
+    public string? ShaderName { get; set; }
 }
 
 /// <summary>
@@ -73,6 +74,12 @@ public unsafe class ShaderDecompiler : IDisposable
             var bundle = Ruri.ShaderDecompiler.Unreal.UnrealShaderParser.Parse(binary);
             byte[] processingBinary = bundle.NativeCode;
             
+            string? recoveredShaderName = null;
+            if (bundle.EngineMetadata is Ruri.ShaderDecompiler.Unreal.UnrealShaderParser.UnrealMetadata uMeta)
+            {
+                recoveredShaderName = uMeta.ShaderName;
+            }
+
             // Auto-detect format if unknown
             if (format == ShaderFormat.Unknown)
             {
@@ -199,7 +206,8 @@ public unsafe class ShaderDecompiler : IDisposable
             {
                 Success = true,
                 HlslSource = hlsl,
-                IntermediateSpirv = patchedSpirv
+                IntermediateSpirv = patchedSpirv,
+                ShaderName = recoveredShaderName
             };
         }
         catch (Exception ex)

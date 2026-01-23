@@ -97,10 +97,8 @@ namespace Ruri.ShaderDecompiler.Unreal
             if (arch != ShaderArchitecture.Unknown && codeStart >= 0)
             {
                 // Parse optional data between SRT and Code
-                var engineMeta = srt; // Keep SRT
-                
-                // Read Uniform Buffer Names if present
-                List<string> ubNames = new();
+                var metadata = new UnrealMetadata { SRT = srt, UniformBufferNames = new List<string>() };
+
                 long optionalDataStart = reader.BaseStream.Position; // End of SRT
                 long optionalDataLength = codeStart - optionalDataStart;
                 
@@ -108,7 +106,7 @@ namespace Ruri.ShaderDecompiler.Unreal
                 {
                     byte[] optData = new byte[optionalDataLength];
                     Array.Copy(data, optionalDataStart, optData, 0, optionalDataLength);
-                    ParseOptionalData(optData, ubNames);
+                    ParseOptionalData(optData, metadata);
                 }
 
                 // Extract code
@@ -129,35 +127,30 @@ namespace Ruri.ShaderDecompiler.Unreal
                     int optAfterSize = len - nativeCodeSize;
                     byte[] optDataAfter = new byte[optAfterSize];
                     Array.Copy(data, optAfterStart, optDataAfter, 0, optAfterSize);
-                    ParseOptionalData(optDataAfter, ubNames);
+                    ParseOptionalData(optDataAfter, metadata);
                 }
 
                 var bundle = new ShaderBundle 
                 { 
                     NativeCode = code, 
                     Architecture = arch,
-                    EngineMetadata = srt 
+                    EngineMetadata = metadata 
                 };
                 
                 // Map Uniform Buffers
-                if (ubNames.Count > 0)
+                if (metadata.UniformBufferNames != null && metadata.UniformBufferNames.Count > 0)
                 {
-                    for (int i = 0; i < ubNames.Count; i++)
+                    for (int i = 0; i < metadata.UniformBufferNames.Count; i++)
                     {
                         bundle.Symbols.Resources.Add(new ResourceSymbol
                         {
-                            Name = ubNames[i],
+                            Name = metadata.UniformBufferNames[i],
                             Set = 0,
                             Binding = i,
                             Type = ResourceType.UniformBuffer,
                             Slot = i
                         });
                     }
-                }
-                
-                if (ubNames.Count > 0)
-                {
-                   bundle.EngineMetadata = new UnrealMetadata { SRT = srt, UniformBufferNames = ubNames };
                 }
                 
                 return bundle;
@@ -198,9 +191,10 @@ namespace Ruri.ShaderDecompiler.Unreal
         {
             public FShaderResourceTable SRT;
             public List<string> UniformBufferNames;
+            public string ShaderName;
         }
 
-        private static void ParseOptionalData(byte[] data, List<string> ubNames)
+        private static void ParseOptionalData(byte[] data, UnrealMetadata metadata)
         {
             try 
             {
@@ -213,31 +207,24 @@ namespace Ruri.ShaderDecompiler.Unreal
                     int size = reader.ReadInt32();
                     
                     if (stream.Position + size > stream.Length) break;
+                    long nextPos = stream.Position + size;
                     
-                    // 'u' = UniformBuffers
+                    // 'u' = UniformBuffers (Array<FString>)
                     if (key == (byte)'u') 
                     {
-                        long nextPos = stream.Position + size;
-                        // Read Array<FString>
+                        if (metadata.UniformBufferNames == null) metadata.UniformBufferNames = new List<string>();
+                        
                         // int count
                         int count = reader.ReadInt32();
                         for(int i=0; i<count; i++)
                         {
                             int strLen = reader.ReadInt32(); // FString length
-                            // Handle potential alignment/encoding
-                            // Usually FString is UTF16 LE with null terminator if len > 0
-                            // Or ANSI if len < 0?
-                            // UE serialization: if len > 0, UTF16. If len < 0, ANSI.
-                            
                             string s = "";
                             if (strLen == 0) { }
                             else if (strLen > 0)
                             {
                                 // Detection: Read strLen bytes. If we find many nulls or it looks like UTF16, read strLen*2.
-                                // Actually, let's try to detect if it's UTF16 LE.
                                 byte[] peek = reader.ReadBytes(Math.Min(strLen * 2, (int)(stream.Length - stream.Position)));
-                                
-                                // Reset position to read properly
                                 stream.Position -= peek.Length;
 
                                 if (peek.Length >= 2 && peek[1] == 0) // Heuristic: second byte 0 is common for ASCII in UTF16
@@ -257,19 +244,40 @@ namespace Ruri.ShaderDecompiler.Unreal
                                 byte[] strBytes = reader.ReadBytes(len);
                                 if (len > 1) s = System.Text.Encoding.ASCII.GetString(strBytes, 0, len - 1);
                             }
-                            ubNames.Add(s);
-                            Console.WriteLine($"[Debug] Found UB Name: {s}");
+                            metadata.UniformBufferNames.Add(s);
+                            // Console.WriteLine($"[Debug] Found UB Name: {s}");
                         }
-                        stream.Position = nextPos;
+                    }
+                    // 'n' = ShaderName (Straight ANSI string)
+                    else if (key == (byte)'n')
+                    {
+                        if (size > 1)
+                        {
+                            byte[] nameBytes = reader.ReadBytes(size - 1); // Exclude null terminator
+                            reader.ReadByte(); // Consume null terminator
+                            metadata.ShaderName = System.Text.Encoding.ASCII.GetString(nameBytes);
+                            Console.WriteLine($"[Debug] Found Shader Name: {metadata.ShaderName}");
+                        }
+                        else
+                        {
+                             reader.ReadBytes(size);
+                        }
                     }
                     else
                     {
                         // Skip
-                        stream.Seek(size, SeekOrigin.Current);
+                        // Console.WriteLine($"[Debug] Skipped Optional Data Key: {(char)key} Size: {size}");
+                        stream.Seek(size, SeekOrigin.Current); // Use original size logic (reader might have advanced)
+                        // Wait, if I read bytes above, current position changed.
+                        // It's safer to always use nextPos
                     }
+                    stream.Position = nextPos;
                 }
             }
-            catch {}
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Debug] Error parsing optional data: {ex.Message}");
+            }
         }
 
 
