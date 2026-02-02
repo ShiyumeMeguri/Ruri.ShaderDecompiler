@@ -108,7 +108,8 @@ namespace Ruri.ShaderDecompiler
             try 
             {
                 var nameMap = nameMapInput ?? new Dictionary<int, string>();
-                
+                var usageMap = new Dictionary<int, HashSet<string>>();
+
                 // 1. Scan Assets (Legacy)
                 if (!string.IsNullOrEmpty(scanAssetsPath))
                 {
@@ -191,6 +192,12 @@ namespace Ruri.ShaderDecompiler
                                          if(idxInternal < lib.ShaderIndices.Length)
                                          {
                                              uint sIdx = lib.ShaderIndices[idxInternal];
+                                             
+                                             // Update Usage Map
+                                             if (!usageMap.ContainsKey((int)sIdx)) usageMap[(int)sIdx] = new HashSet<string>();
+                                             foreach (var m in mats) usageMap[(int)sIdx].Add(m);
+                                             
+                                             // Update Name Map (First wins)
                                              if(!nameMap.ContainsKey((int)sIdx))
                                              {
                                                  nameMap[(int)sIdx] = niceName;
@@ -222,8 +229,6 @@ namespace Ruri.ShaderDecompiler
                     
                     if (code == null) continue;
                     
-                    // Determine Stage/Frequency
-                    // EShaderFrequency: Vertex=0, Hull=1, Domain=2, Pixel=3, Geometry=4, Compute=5
                     string typeSuffix = GetShaderFreqString(entry.Frequency);
 
                     try 
@@ -234,26 +239,30 @@ namespace Ruri.ShaderDecompiler
                             string finalName = "";
                             
                             // 1. Try Map
-                            if (nameMap.ContainsKey(i))
-                            {
-                                finalName = nameMap[i];
-                            }
+                            if (nameMap.ContainsKey(i)) finalName = nameMap[i];
                             // 2. Try embedded name
-                            else if (!string.IsNullOrEmpty(res.ShaderName))
-                            {
-                                finalName = res.ShaderName;
-                            }
-                            else
-                            {
-                                finalName = "UnknownShader";
-                            }
+                            else if (!string.IsNullOrEmpty(res.ShaderName)) finalName = res.ShaderName;
+                            else finalName = "UnknownShader";
                             
-                            // Sanitize
                             finalName = string.Join("_", finalName.Split(Path.GetInvalidFileNameChars()));
-
-                            // Format: {Material}_{Type}_{Index}.hlsl
                             string outName = $"{finalName}_{typeSuffix}_{i}.hlsl";
                             
+                            // Inject Header
+                            if (usageMap.TryGetValue(i, out var usedBy))
+                            {
+                                 var sb = new System.Text.StringBuilder();
+                                 sb.AppendLine("/*");
+                                 sb.AppendLine(" * UE Shader Info");
+                                 sb.AppendLine($" * Index: {i}");
+                                 sb.AppendLine($" * Stage: {typeSuffix}");
+                                 sb.AppendLine($" * Used by {usedBy.Count} Materials:");
+                                 foreach(var m in usedBy.OrderBy(x=>x).Take(20)) sb.AppendLine($" *  - {m}");
+                                 if(usedBy.Count > 20) sb.AppendLine($" *  ... and {usedBy.Count-20} more");
+                                 sb.AppendLine(" */");
+                                 sb.AppendLine("");
+                                 res.HlslSource = sb.ToString() + res.HlslSource;
+                            }
+
                             File.WriteAllText(Path.Combine(outputPath, outName), res.HlslSource);
                             successCount++;
                         }
