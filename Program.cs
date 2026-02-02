@@ -3,6 +3,8 @@ using System.IO;
 using Ruri.ShaderDecompiler;
 using Ruri.ShaderDecompiler.Engine;
 using Ruri.ShaderDecompiler.Utils;
+using System.Linq;
+using Newtonsoft.Json;
 using Ruri.ShaderDecompiler.Intermediate;
 
 namespace Ruri.ShaderDecompiler
@@ -13,7 +15,7 @@ namespace Ruri.ShaderDecompiler
         {
             if (args.Length < 1)
             {
-                Console.WriteLine("Usage: ShaderDecompiler.exe <input> [mode] [output] [--keep-temps]");
+                Console.WriteLine("Usage: ShaderDecompiler.exe <input> [mode] [output] [--keep-temps] [--mapping <path>]");
                 return 1;
             }
 
@@ -22,7 +24,9 @@ namespace Ruri.ShaderDecompiler
             string? outputPath = args.Length > 2 ? args[2] : null;
             bool keepTemps = false;
             string? scanAssetsPath = null;
+            string? mappingPath = null;
 
+            var nameMap = new Dictionary<int, string>();
             for (int i = 1; i < args.Length; i++)
             {
                 if (args[i] == "--keep-temps") keepTemps = true;
@@ -31,7 +35,20 @@ namespace Ruri.ShaderDecompiler
                     scanAssetsPath = args[i + 1];
                     i++; // Skip next arg
                 }
+                else if (args[i] == "--mapping" && i + 1 < args.Length)
+                {
+                    mappingPath = args[i + 1];
+                    i++; 
+                }
+                else if (args[i] == "--restore-symbols" && i + 2 < args.Length)
+                {
+                    string matDir = args[i+1];
+                    string arcDir = args[i+2];
+                    nameMap = ShaderBindingExtractor.ScanAndRestore(matDir, arcDir);
+                    i += 2;
+                }
                 else if (args[i].StartsWith("-")) mode = args[i];
+
                 else if (args[i] != inputPath) outputPath = args[i];
             }
 
@@ -44,7 +61,7 @@ namespace Ruri.ShaderDecompiler
             // Handle .ushaderlib
             if (inputPath.EndsWith(".ushaderlib", StringComparison.OrdinalIgnoreCase))
             {
-                return ProcessUnrealLibrary(inputPath, outputPath, keepTemps, scanAssetsPath);
+                return ProcessUnrealLibrary(inputPath, outputPath, keepTemps, scanAssetsPath, mappingPath, nameMap);
             }
 
             // Legacy single file mode logic
@@ -86,18 +103,23 @@ namespace Ruri.ShaderDecompiler
             }
         }
 
-        static int ProcessUnrealLibrary(string inputPath, string? outputPath, bool keepTemps, string? scanAssetsPath)
+        static int ProcessUnrealLibrary(string inputPath, string? outputPath, bool keepTemps, string? scanAssetsPath, string? mappingPath, Dictionary<int, string>? nameMapInput = null)
         {
             try 
             {
-                Dictionary<int, string> nameMap = new();
+                var nameMap = nameMapInput ?? new Dictionary<int, string>();
+                
+                // 1. Scan Assets (Legacy)
                 if (!string.IsNullOrEmpty(scanAssetsPath))
                 {
                     try
                     {
                         var manager = new MaterialShaderManager();
                         manager.ScanMaterials(scanAssetsPath);
-                        nameMap = manager.ShaderIndexToNameMap;
+                        foreach (var kv in manager.ShaderIndexToNameMap)
+                        {
+                            nameMap[kv.Key] = kv.Value;
+                        }
                     }
                     catch(Exception ex)
                     {
@@ -107,7 +129,83 @@ namespace Ruri.ShaderDecompiler
 
                 var lib = UnrealShaderLibraryReader.Read(inputPath);
                 Console.WriteLine($"Read Library: {lib.Version} Version, {lib.ShaderEntries.Length} shaders.");
-                
+
+                // 2. Auto-Detect Mapping if not provided
+                if (string.IsNullOrEmpty(mappingPath))
+                {
+                    var dir = Path.GetDirectoryName(inputPath);
+                    while (dir != null)
+                    {
+                        var candidate = Path.Combine(dir, "ShaderMappings.json");
+                        if (File.Exists(candidate))
+                        {
+                            mappingPath = candidate;
+                            Console.WriteLine($"[Auto-Detect] Found mapping file: {mappingPath}");
+                            break;
+                        }
+                        var parent = Directory.GetParent(dir);
+                        if (parent == null) break;
+                        dir = parent.FullName;
+                    }
+                }
+
+                // 3. Load Shader Mappings (JSON)
+                if (!string.IsNullOrEmpty(mappingPath) && File.Exists(mappingPath))
+                {
+                     try
+                     {
+                         Console.WriteLine($"Loading mapping from {mappingPath}...");
+                         var json = File.ReadAllText(mappingPath);
+                         var mapping = JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
+                         
+                         var hashToMats = new Dictionary<string, HashSet<string>>();
+                         if(mapping != null)
+                         {
+                             foreach(var kvp in mapping)
+                             {
+                                 foreach(var hash in kvp.Value)
+                                 {
+                                     if (!hashToMats.ContainsKey(hash)) hashToMats[hash] = new HashSet<string>();
+                                     string simpleName = Path.GetFileNameWithoutExtension(kvp.Key);
+                                     hashToMats[hash].Add(simpleName);
+                                 }
+                             }
+                             
+                             Console.WriteLine($"Loaded {mapping.Count} material mappings.");
+
+                             int mapCount = Math.Min(lib.ShaderMapEntries.Length, lib.ShaderMapHashes.Count); 
+                             int mappedShaders = 0;
+
+                             for(int i=0; i<mapCount; i++)
+                             {
+                                 var hash = lib.ShaderMapHashes[i];
+                                 if (hashToMats.TryGetValue(hash, out var mats))
+                                 {
+                                     var entry = lib.ShaderMapEntries[i];
+                                     // "Use first material name" rule from user
+                                     var niceName = mats.FirstOrDefault() ?? "UnknownMaterial"; 
+                                     
+                                     for(uint k=0; k<entry.NumShaders; k++)
+                                     {
+                                         long idxInternal = entry.ShaderIndicesOffset + k;
+                                         if(idxInternal < lib.ShaderIndices.Length)
+                                         {
+                                             uint sIdx = lib.ShaderIndices[idxInternal];
+                                             if(!nameMap.ContainsKey((int)sIdx))
+                                             {
+                                                 nameMap[(int)sIdx] = niceName;
+                                                 mappedShaders++;
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                             Console.WriteLine($"Mapped {mappedShaders} shaders using JSON mapping.");
+                         }
+                     }
+                     catch(Exception ex) { Console.WriteLine($"[Warning] JSON Mapping failed: {ex.Message}"); }
+                }
+
                 if (outputPath == null) 
                     outputPath = Path.Combine(Path.GetDirectoryName(inputPath)!, Path.GetFileNameWithoutExtension(inputPath) + "_Export");
                 
@@ -124,32 +222,37 @@ namespace Ruri.ShaderDecompiler
                     
                     if (code == null) continue;
                     
-                    var dumpPath = Path.Combine(outputPath, $"Shader_{i}.bin");
-                    File.WriteAllBytes(dumpPath, code);
+                    // Determine Stage/Frequency
+                    // EShaderFrequency: Vertex=0, Hull=1, Domain=2, Pixel=3, Geometry=4, Compute=5
+                    string typeSuffix = GetShaderFreqString(entry.Frequency);
 
-                    // Decompile using auto-detection
                     try 
                     {
                         var res = decompiler.Decompile(code, ShaderFormat.Unknown, null, 50);
                         if (res.Success)
                         {
-                            string outName = $"Shader_{i}.hlsl";
+                            string finalName = "";
                             
-                            // Valid name sources order: 
-                            // 1. Binary embedded name (Key 'n') - usually missing in Shipping
-                            // 2. Material Asset Map
+                            // 1. Try Map
+                            if (nameMap.ContainsKey(i))
+                            {
+                                finalName = nameMap[i];
+                            }
+                            // 2. Try embedded name
+                            else if (!string.IsNullOrEmpty(res.ShaderName))
+                            {
+                                finalName = res.ShaderName;
+                            }
+                            else
+                            {
+                                finalName = "UnknownShader";
+                            }
                             
-                            if (!string.IsNullOrEmpty(res.ShaderName))
-                            {
-                                string safeName = string.Join("_", res.ShaderName.Split(Path.GetInvalidFileNameChars()));
-                                outName = $"{safeName}.hlsl";
-                            }
-                            else if (nameMap.ContainsKey(i))
-                            {
-                                string mappedName = nameMap[i];
-                                string safeName = string.Join("_", mappedName.Split(Path.GetInvalidFileNameChars()));
-                                outName = $"{safeName}.hlsl";
-                            }
+                            // Sanitize
+                            finalName = string.Join("_", finalName.Split(Path.GetInvalidFileNameChars()));
+
+                            // Format: {Material}_{Type}_{Index}.hlsl
+                            string outName = $"{finalName}_{typeSuffix}_{i}.hlsl";
                             
                             File.WriteAllText(Path.Combine(outputPath, outName), res.HlslSource);
                             successCount++;
@@ -174,6 +277,26 @@ namespace Ruri.ShaderDecompiler
                 Console.Error.WriteLine($"Library Error: {ex.Message}");
                 return 1;
             }
+        }
+
+        static string GetShaderFreqString(byte frequency)
+        {
+            return frequency switch
+            {
+                0 => "VS",
+                1 => "HS",
+                2 => "DS",
+                3 => "PS",
+                4 => "GS",
+                5 => "CS",
+                6 => "RG", // RayGen
+                7 => "RM", // RayMiss
+                8 => "RH", // RayHit
+                9 => "RC", // RayCallable
+                10 => "MS", // Mesh
+                11 => "AS", // Amplification
+                _ => $"Freq{frequency}"
+            };
         }
 
         static ShaderFormat ParseFormat(string mode)

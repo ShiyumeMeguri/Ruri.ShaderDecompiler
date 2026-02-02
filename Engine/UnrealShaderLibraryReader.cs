@@ -14,12 +14,22 @@ namespace Ruri.ShaderDecompiler.Engine
             public byte Frequency; 
         }
 
+        public struct FShaderMapEntry
+        {
+            public uint ShaderIndicesOffset;
+            public uint NumShaders;
+            public uint FirstPreloadIndex;
+            public uint NumPreloadEntries;
+        }
+
         public class ShaderLibrary
         {
             public uint Version;
             public List<string> ShaderMapHashes = new();
             public List<string> ShaderHashes = new();
+            public FShaderMapEntry[] ShaderMapEntries = Array.Empty<FShaderMapEntry>();
             public FShaderCodeEntry[] ShaderEntries = Array.Empty<FShaderCodeEntry>();
+            public uint[] ShaderIndices = Array.Empty<uint>();
             public byte[] CodeBuffer = Array.Empty<byte>();
 
             public byte[]? GetShaderCode(int index)
@@ -57,8 +67,17 @@ namespace Ruri.ShaderDecompiler.Engine
 
             // ShaderMapEntries
             count = reader.ReadInt32();
-            // struct FShaderMapEntry { uint, uint, uint, uint } = 16 bytes
-            fs.Seek(count * 16, SeekOrigin.Current);
+            lib.ShaderMapEntries = new FShaderMapEntry[count];
+            for(int i=0; i<count; i++)
+            {
+                lib.ShaderMapEntries[i] = new FShaderMapEntry
+                {
+                   ShaderIndicesOffset = reader.ReadUInt32(),
+                   NumShaders = reader.ReadUInt32(),
+                   FirstPreloadIndex = reader.ReadUInt32(),
+                   NumPreloadEntries = reader.ReadUInt32()
+                };
+            }
 
             // ShaderCodeEntries
             count = reader.ReadInt32();
@@ -80,8 +99,11 @@ namespace Ruri.ShaderDecompiler.Engine
 
             // ShaderIndices
             count = reader.ReadInt32();
-            // uint = 4 bytes
-            fs.Seek(count * 4, SeekOrigin.Current);
+            lib.ShaderIndices = new uint[count];
+            for(int i=0; i<count; i++)
+            {
+                lib.ShaderIndices[i] = reader.ReadUInt32();
+            }
 
             // Code Buffer
             // The rest of the stream is the code buffer
