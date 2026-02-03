@@ -6,6 +6,7 @@ using Ruri.ShaderDecompiler.Utils;
 using System.Linq;
 using Newtonsoft.Json;
 using Ruri.ShaderDecompiler.Intermediate;
+using Ruri.ShaderDecompiler.Unreal;
 
 namespace Ruri.ShaderDecompiler
 {
@@ -167,8 +168,8 @@ namespace Ruri.ShaderDecompiler
                                  foreach(var hash in kvp.Value)
                                  {
                                      if (!hashToMats.ContainsKey(hash)) hashToMats[hash] = new HashSet<string>();
-                                     string simpleName = Path.GetFileNameWithoutExtension(kvp.Key);
-                                     hashToMats[hash].Add(simpleName);
+                                     // Store FULL path for precise mapping
+                                     hashToMats[hash].Add(kvp.Key);
                                  }
                              }
                              
@@ -184,7 +185,10 @@ namespace Ruri.ShaderDecompiler
                                  {
                                      var entry = lib.ShaderMapEntries[i];
                                      // "Use first material name" rule from user
-                                     var niceName = mats.FirstOrDefault() ?? "UnknownMaterial"; 
+                                     // NOTE: We must extract simple name for file naming, but keep full path in usedBy for mapper
+                                     string fullMaterialPath = mats.FirstOrDefault() ?? "Unknown";
+                                     var niceName = Path.GetFileNameWithoutExtension(fullMaterialPath);
+                                     if (string.IsNullOrEmpty(niceName)) niceName = "UnknownMaterial"; 
                                      
                                      for(uint k=0; k<entry.NumShaders; k++)
                                      {
@@ -211,6 +215,22 @@ namespace Ruri.ShaderDecompiler
                          }
                      }
                      catch(Exception ex) { Console.WriteLine($"[Warning] JSON Mapping failed: {ex.Message}"); }
+                }
+
+                // 4. Load Material Parameter Mappings (Precise)
+                Ruri.ShaderDecompiler.Unreal.PreciseParameterMapper? preciseMapper = null;
+                if (!string.IsNullOrEmpty(mappingPath))
+                {
+                    string paramMappingPath = Path.Combine(Path.GetDirectoryName(mappingPath)!, "MaterialParameterMappings.json");
+                    if (File.Exists(paramMappingPath))
+                    {
+                        Console.WriteLine($"[信息] 加载参数映射文件: {paramMappingPath}");
+                        preciseMapper = Ruri.ShaderDecompiler.Unreal.PreciseParameterMapper.LoadFromFile(paramMappingPath);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[警告] 未找到参数映射文件: {paramMappingPath} (将无法进行变量重命名)");
+                    }
                 }
 
                 if (outputPath == null) 
@@ -256,10 +276,77 @@ namespace Ruri.ShaderDecompiler
                                  sb.AppendLine($" * Index: {i}");
                                  sb.AppendLine($" * Stage: {typeSuffix}");
                                  sb.AppendLine($" * Used by {usedBy.Count} Materials:");
-                                 foreach(var m in usedBy.OrderBy(x=>x).Take(20)) sb.AppendLine($" *  - {m}");
+                                 
+                                 // Try to find a material with precise mapping
+                                 MaterialMapping? bestMapping = null;
+                                 string bestMaterialName = "";
+
+                                 foreach(var m in usedBy) 
+                                 {
+                                     if (bestMapping == null && preciseMapper != null)
+                                     {
+                                         // Debug match attempts
+                                         bestMapping = preciseMapper.GetByMaterialPath(m);
+                                         if (bestMapping != null) 
+                                         {
+                                             bestMaterialName = m;
+                                             Console.WriteLine($"[调试] 成功匹配: '{m}'");
+                                         }
+                                         else
+                                         {
+                                            // Only log first few failures to avoid spam
+                                            if (usedBy.Count < 5) Console.WriteLine($"[调试] 匹配失败: '{m}'");
+                                         }
+                                     }
+                                     
+                                     // Limit list in header
+                                     if (usedBy.Count <= 20 || m == bestMaterialName)
+                                         sb.AppendLine($" *  - {m}");
+                                 }
+                                 
                                  if(usedBy.Count > 20) sb.AppendLine($" *  ... and {usedBy.Count-20} more");
                                  sb.AppendLine(" */");
                                  sb.AppendLine("");
+
+                                 ShaderSymbolMetadata? injectionSymbols = null;
+
+                                 // Inject Precise Parameter Mapping Header & Prepare Symbols
+                                 if (bestMapping != null && preciseMapper != null)
+                                 {
+                                     Console.WriteLine($"[信息] Shader {i} 匹配到材质: {bestMaterialName} (包含参数映射)");
+                                     string mappingHeader = preciseMapper.GenerateHlslHeader(bestMapping, bestMaterialName);
+                                     sb.AppendLine(mappingHeader);
+
+                                     // Prepare symbols for native injection
+                                     injectionSymbols = preciseMapper.GetSymbolMetadata(bestMapping);
+                                 }
+                                 else
+                                 {
+                                     // Console.WriteLine($"[警告] Shader {i} 未找到精确材质映射");
+                                 }
+
+                                 // Re-decompile with symbols if available to get native variable names
+                                 if (injectionSymbols != null)
+                                 {
+                                     try 
+                                     {
+                                         // Decompile again, this time with symbols which will be patched into SPIR-V
+                                         var resWithSymbols = decompiler.Decompile(code, ShaderFormat.Unknown, injectionSymbols, 50);
+                                         if (resWithSymbols.Success)
+                                         {
+                                              res = resWithSymbols;
+                                         }
+                                         else
+                                         {
+                                              Console.WriteLine($"[警告] 符号注入重编译失败 (HLSL生成错误): {resWithSymbols.ErrorMessage}");
+                                         }
+                                     }
+                                     catch (Exception ex) 
+                                     {
+                                         Console.WriteLine($"[警告] 符号注入重编译异常: {ex.Message}");
+                                     }
+                                 }
+
                                  res.HlslSource = sb.ToString() + res.HlslSource;
                             }
 

@@ -135,7 +135,22 @@ public unsafe class ShaderDecompiler : IDisposable
 
             // Step 2: Patch SPIR-V with symbols
             byte[] patchedSpirv = spirv;
-            var finalSymbols = symbols ?? bundle.Symbols;
+            
+            // MERGE STRATEGY: Combine default symbols (extracted from binary) with precise symbols (from JSON)
+            // Precise symbols (Texture names) should take precedence or just be added.
+            // Default symbols (CBuffer names like View) must be preserved.
+            var finalSymbols = bundle.Symbols ?? new Ruri.ShaderDecompiler.Intermediate.ShaderSymbolMetadata();
+            
+            if (symbols != null)
+            {
+                foreach (var r in symbols.Resources)
+                {
+                    // Check if duplicate binding exists, if so, maybe overwrite? 
+                    // For now, let's just add. SpirvPatcher filters by binding anyway.
+                    // Or we could remove existing with same Binding/Set.
+                    finalSymbols.Resources.Add(r);
+                }
+            }
 
             if (finalSymbols != null && finalSymbols.Resources.Count > 0)
             {
@@ -171,13 +186,21 @@ public unsafe class ShaderDecompiler : IDisposable
 
                         if (typeMatch)
                         {
-                            Console.WriteLine($"[Debug] Mapping {r.Name} to Id {m.Id} ({m.DescriptorType})");
-                            patches.Add((m.Id, r.Name));
-                            
-                            // If it's a UniformBuffer, also name the struct type
+                            // If it's a UniformBuffer, we must be careful about naming collisions between Type and Variable
                             if (m.DescriptorType == "UniformBuffer" && m.StructTypeId.HasValue && m.StructTypeId.Value != 0)
                             {
-                                patches.Add((m.StructTypeId.Value, r.Name));
+                                // Name the Block (Type) with a suffix to avoid collision, allowing Variable to have the clean name
+                                // The Regex post-processor will strip this suffix from the HLSL cbuffer declaration later.
+                                patches.Add((m.StructTypeId.Value, r.Name + "_Type"));
+                                
+                                // Name the Instance - this determines member prefixes (e.g. View_m0)
+                                Console.WriteLine($"[Debug] Mapping {r.Name} to Id {m.Id} (Var) and {r.Name}_Type to Id {m.StructTypeId.Value} (Type)");
+                                patches.Add((m.Id, r.Name));
+                            }
+                            else
+                            {
+                                Console.WriteLine($"[Debug] Mapping {r.Name} to Id {m.Id} ({m.DescriptorType})");
+                                patches.Add((m.Id, r.Name));
                             }
                         }
                         else
@@ -201,6 +224,29 @@ public unsafe class ShaderDecompiler : IDisposable
             if (crossRes != 0) throw new Exception($"spirv-cross failed: {crossErr}");
 
             string hlsl = File.ReadAllText(tempHlsl);
+
+            // Step 4: Fallback / Post-Process for CBuffers
+            // Native patching of Block names in SPIR-V is flaky with spirv-cross.
+            // We allow Regex fixups here to ensure "cbuffer View" appears instead of "cbuffer CB0UBO".
+            if (finalSymbols != null)
+            {
+                foreach (var r in finalSymbols.Resources.Where(x => x.Type == ResourceType.UniformBuffer))
+                {
+                    // Match: cbuffer Name : register(bX) OR cbuffer Name : register(bX, spaceY)
+                    // Group 1: OldName
+                    // Group 2: space part (optional)
+                    var pattern = $@"cbuffer\s+(\w+)\s*:\s*register\(\s*b{r.Binding}(?:,\s*space{r.Set})?\)";
+                    var regex = new System.Text.RegularExpressions.Regex(pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    
+                    hlsl = regex.Replace(hlsl, (match) => 
+                    {
+                       // Keep the register part, replace the name
+                       var oldName = match.Groups[1].Value;
+                       var declaration = match.Value;
+                       return declaration.Replace(oldName, r.Name);
+                    });
+                }
+            }
 
             return new DecompileResult
             {
