@@ -13,6 +13,8 @@
 
 * [ ] **统一反编译输出为 ShaderLab**
 
+* [ ] 将 SPIRV-Cross 反编译的狗屎hlsl代码重新编译到DXBC 让编译器优化指令数量 然后重新反编译回更可读的hlsl
+
 ---
 
 ## 🎯 核心原理（Core Philosophy）
