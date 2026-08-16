@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Ruri.ShaderTools</RootNamespace>
+    <AssemblyName>Ruri.ShaderDecompiler</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SPIR-V → HLSL/GLSL. Ships the native library under runtimes/<rid>/native;
+         the backend P/Invokes the stable spvc_* C ABI directly. -->
+    <PackageReference Include="Silk.NET.SPIRV.Cross.Native" Version="2.23.0" />
+
+    <!-- DXBC/DXIL → SPIR-V. Bundles dxil-spirv-c-shared cross-platform, whose own
+         legacy translator handles shader-model-5 DXBC directly, so no separate
+         conversion tool is needed.
+
+         PINNED deliberately: the scalar-layout vectoriser is validated against
+         THIS build's constant-buffer lowering. Bump it on purpose, with a fixture
+         diff — not incidentally.
+
+         ⚠ After changing any PackageReference here, clean-rebuild (delete obj and
+         bin). A stale restore surfaces as `dxil_spv_parse_dxil_blob failed (-4)`
+         on every shader, which reads like corrupt input rather than a build
+         problem. -->
+    <PackageReference Include="AssetRipper.Bindings.DxilSpirV" Version="1.1.1-nightly.129" />
+
+    <!-- Symbol tables round-trip through JSON sidecars. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

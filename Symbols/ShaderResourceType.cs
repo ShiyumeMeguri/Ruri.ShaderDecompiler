@@ -1,0 +1,32 @@
+namespace Ruri.ShaderTools;
+
+public enum ShaderResourceType
+{
+    Unknown = 0,
+    Texture,
+    SampledImage,
+    SRV,
+    UAV,
+    Sampler,
+    SamplerComparison,
+    ConstantBuffer,
+    Buffer,
+    StructuredBuffer,
+    ByteAddressBuffer,
+    RWBuffer,
+    RWStructuredBuffer,
+    RWByteAddressBuffer,
+    Texture2D,
+    Texture2DArray,
+    Texture3D,
+    TextureCube,
+    TextureCubeArray,
+    Texture2DMS,
+    RWTexture2D,
+    RWTexture2DArray,
+    RWTexture3D,
+    RaytracingAccelerationStructure,
+    StorageImage,
+    StorageBuffer,
+    InputAttachment,
+}
