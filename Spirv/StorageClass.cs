@@ -10,7 +10,7 @@ namespace Ruri.ShaderTools.Spirv;
 /// <see cref="Decoration.BufferBlock"/>) what separates a cbuffer from an SSBO
 /// in pre-1.3 modules.
 /// </summary>
-internal static class StorageClass
+public static class StorageClass
 {
     public const uint UniformConstant = 0;
     public const uint Input = 1;

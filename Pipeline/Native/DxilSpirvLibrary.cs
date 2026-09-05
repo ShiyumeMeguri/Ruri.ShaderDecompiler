@@ -26,6 +26,8 @@ internal static unsafe class DxilSpirvLibrary
 {
     private const string Lib = "dxil-spirv-c-shared";
 
+    static DxilSpirvLibrary() => NativeLibraryResolver.EnsureInitialized(null);
+
     // dxil_spv_resource_kind
     private const int KIND_TYPED_BUFFER = 10;
     private const int KIND_RAW_BUFFER = 11;

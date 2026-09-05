@@ -8,7 +8,7 @@ namespace Ruri.ShaderTools.Spirv;
 /// from an instruction: the same handful of ids drive resource binding
 /// discovery, block layout, and matrix packing across every transform.
 /// </summary>
-internal static class Decoration
+public static class Decoration
 {
     /// <summary>Layout decoration marking a uniform block (cbuffer).</summary>
     public const uint Block = 2;

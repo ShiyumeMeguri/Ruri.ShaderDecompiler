@@ -9,7 +9,7 @@ namespace Ruri.ShaderTools.Spirv;
 /// <see cref="Decoration"/> / <see cref="StorageClass"/>; module-header
 /// constants live on <see cref="SpirvModule"/>.
 /// </summary>
-internal static class SpvOpCode
+public static class SpvOpCode
 {
     // --- miscellaneous / debug -------------------------------------------
     public const ushort OpNop = 0;
@@ -62,6 +62,32 @@ internal static class SpvOpCode
     public const ushort OpStore = 62;
     public const ushort OpAccessChain = 65;
     public const ushort OpInBoundsAccessChain = 66;
+    public const ushort OpFunction = 54;
+    public const ushort OpFunctionParameter = 55;
+    public const ushort OpFunctionEnd = 56;
+    public const ushort OpFunctionCall = 57;
+    public const ushort OpVectorExtractDynamic = 77;
+    public const ushort OpCompositeConstruct = 80;
+    public const ushort OpImageSampleImplicitLod = 87;
+    public const ushort OpImageSampleExplicitLod = 88;
+    public const ushort OpImageSampleDrefImplicitLod = 89;
+    public const ushort OpImageSampleDrefExplicitLod = 90;
+    public const ushort OpImageSampleProjImplicitLod = 91;
+    public const ushort OpImageSampleProjExplicitLod = 92;
+    public const ushort OpImageSampleProjDrefImplicitLod = 93;
+    public const ushort OpImageSampleProjDrefExplicitLod = 94;
+    public const ushort OpImageFetch = 95;
+    public const ushort OpImageGather = 96;
+    public const ushort OpImageDrefGather = 97;
+    public const ushort OpImageRead = 98;
+    public const ushort OpImage = 100;
+    public const ushort OpSelect = 169;
+    public const ushort OpLabel = 248;
+    public const ushort OpBranch = 249;
+    public const ushort OpKill = 252;
+    public const ushort OpReturnValue = 254;
+    public const ushort OpTerminateInvocation = 4416;
+    public const ushort OpDemoteToHelperInvocation = 5380;
 
     // --- annotation -------------------------------------------------------
     public const ushort OpDecorate = 71;

@@ -13,7 +13,7 @@ namespace Ruri.ShaderTools.Spirv.Analysis;
 // silently answer for something it never saw. Every stage that both mutates and
 // queries builds the table before its mutation loop and only ever looks up ids
 // that predate it.
-internal sealed class ResultIdTable
+public sealed class ResultIdTable
 {
     private readonly SpirvInstruction?[] _definitions;
 

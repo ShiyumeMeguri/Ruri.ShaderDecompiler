@@ -1,6 +1,6 @@
 namespace Ruri.ShaderTools.Spirv;
 
-internal enum SpvResultLayout : byte
+public enum SpvResultLayout : byte
 {
     None = 0,
     Id = 1,
@@ -739,7 +739,7 @@ internal enum SpvOperandLayoutOpcode : ushort
     OpFDot4MixAcc32VALVE = 6918,
 }
 
-internal static class SpvInstructionTraits
+public static class SpvInstructionTraits
 {
     // Derived from the Khronos SPIR-V core grammar operand layouts.
     private static readonly SpvOperandLayoutOpcode[] ResultIdOnlyOpcodes =

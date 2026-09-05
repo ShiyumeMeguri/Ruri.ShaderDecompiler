@@ -7,7 +7,7 @@ namespace Ruri.ShaderTools.Spirv.Analysis;
 // Built by ONE forward walk. The rule for this type is: if a later stage needs a
 // new structural fact, teach the walk to record it — never re-walk the module
 // from a downstream stage. That single rule is what keeps the pipeline linear.
-internal sealed class ModuleShape
+public sealed class ModuleShape
 {
     /// <summary>Decorated id → its <c>DescriptorSet</c> / <c>Binding</c>, either
     /// of which may be absent until both decorations have been seen.</summary>

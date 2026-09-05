@@ -43,7 +43,7 @@ namespace Ruri.ShaderTools.Spirv;
 // byte layout (repeated inserts at the decoration anchor land in reverse call
 // order; at the debug anchor they append in call order).
 // ============================================================================
-internal sealed class SpirvModule
+public sealed class SpirvModule
 {
     /// <summary>SPIR-V module magic number (word 0).</summary>
     public const uint MagicNumber = 0x07230203;
@@ -366,7 +366,7 @@ internal sealed class SpirvModule
 // ⚠ `Words` is a live view. Do not hold one across a `SetWords` on the SAME
 // instruction (the slice may move to a fresh chunk). Holding one across edits
 // to OTHER instructions is safe — chunks are never reallocated.
-internal sealed class SpirvInstruction
+public sealed class SpirvInstruction
 {
     private readonly SpirvModule _module;
 
