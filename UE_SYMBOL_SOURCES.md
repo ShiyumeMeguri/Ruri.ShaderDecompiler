@@ -104,7 +104,7 @@ Clamp_WorldGroupSettings (Sampler, always)
 
 Implication: a 5.1-replay against a 5.4 cook **mis-names everything after the first SVT/VT slot**. Layout reader must branch on engine version (or detect SVT prefix via heuristic on `Resources[].MemberOffset`).
 
-**Implementation**: [`MaterialUniformBufferLayout.cs`](../Ruri.FModelHook/Game/SBUE/ShaderDecompiler/MaterialUniformBufferLayout.cs) (currently 5.1-only — TODO: add 5.4 branch).
+**Implementation**: [`MaterialUniformBufferLayout.cs`](../Ruri.FModelHook/FModelHook/ShaderDecompiler/MaterialUniformBufferLayout.cs) (currently 5.1-only — TODO: add 5.4 branch).
 
 ## 5. Material UB numeric member naming (preshader decode)
 
@@ -125,7 +125,7 @@ preshaderBufferStart = ResourceBlockStart - PreshaderBufferSize*16
 ResourceBlockStart = UniformBufferLayoutInitializer.Resources[0].MemberOffset
 ```
 
-Implementation: [`MaterialConstantBufferReader.cs`](../Ruri.FModelHook/Game/SBUE/ShaderDecompiler/MaterialConstantBufferReader.cs).
+Implementation: [`MaterialConstantBufferReader.cs`](../Ruri.FModelHook/FModelHook/ShaderDecompiler/MaterialConstantBufferReader.cs).
 
 ## 6. Engine UB recovery — external metadata (project-rule-compliant fallback)
 
