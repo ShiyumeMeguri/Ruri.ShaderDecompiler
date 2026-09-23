@@ -75,6 +75,12 @@ internal static class SlotExpressionDecomposer
         dynamicStride = 0;
         constantOffset = 0;
 
+        if (constants.TryGetValue(valueId, out uint literal) && literal <= int.MaxValue)
+        {
+            constantOffset = (int)literal;
+            return true;
+        }
+
         SpirvInstruction? definition = definitions.DefinitionOf(valueId);
         if (definition is null)
         {
@@ -119,6 +125,37 @@ internal static class SlotExpressionDecomposer
             // dynamic+dynamic, overflow, or an oversized literal: fall through.
         }
 
+        // Byte addressing: `(i * 16 + base) >> 2` is a float index and `>> 2` of that
+        // is the register. Shifting right by k is exact on the affine form only when
+        // the stride is a multiple of 2^k — then the dynamic term never carries into
+        // the bits being dropped.
+        if ((opCode == SpvOpCode.OpShiftRightLogical || opCode == SpvOpCode.OpShiftRightArithmetic) && definition.WordCount >= 5
+            && constants.TryGetValue(definition[4], out uint shift) && shift <= 30
+            && TryDecompose(definitions, constants, definition[3], out uint shiftedIndex, out int shiftedStride, out int shiftedOffset)
+            && shiftedOffset >= 0
+            && (shiftedIndex == 0 || (shiftedStride > 0 && shiftedStride % (1 << (int)shift) == 0)))
+        {
+            dynamicIndexId = shiftedIndex;
+            dynamicStride = shiftedIndex == 0 ? 0 : shiftedStride >> (int)shift;
+            constantOffset = shiftedOffset >> (int)shift;
+            return true;
+        }
+
+        // `float index & 3` is the component within the register. Masking with
+        // 2^k - 1 keeps only the low k bits, which a stride that is a multiple of
+        // 2^k never touches — the dynamic term vanishes and the result is constant.
+        if (opCode == SpvOpCode.OpBitwiseAnd && definition.WordCount >= 5
+            && TryMaskOperands(definition, constants, out uint maskedId, out uint mask)
+            && TryDecompose(definitions, constants, maskedId, out uint maskedIndex, out int maskedStride, out int maskedOffset)
+            && maskedOffset >= 0
+            && (maskedIndex == 0 || (maskedStride > 0 && maskedStride % (int)(mask + 1) == 0)))
+        {
+            dynamicIndexId = 0;
+            dynamicStride = 0;
+            constantOffset = maskedOffset & (int)mask;
+            return true;
+        }
+
         if ((opCode == SpvOpCode.OpIMul || opCode == SpvOpCode.OpShiftLeftLogical) && definition.WordCount >= 5)
         {
             uint left = definition[3];
@@ -154,6 +191,30 @@ internal static class SlotExpressionDecomposer
         constantOffset = 0;
         return true;
     }
+
+    /// <summary>The non-constant operand of an AND whose other operand is a low-bit mask (2^k - 1).</summary>
+    private static bool TryMaskOperands(SpirvInstruction definition, ConstantValueMap constants, out uint maskedId, out uint mask)
+    {
+        maskedId = 0;
+        mask = 0;
+        if (constants.TryGetValue(definition[4], out uint right) && IsLowBitMask(right))
+        {
+            maskedId = definition[3];
+            mask = right;
+            return true;
+        }
+
+        if (constants.TryGetValue(definition[3], out uint left) && IsLowBitMask(left))
+        {
+            maskedId = definition[4];
+            mask = left;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsLowBitMask(uint value) => value < int.MaxValue && (value & (value + 1)) == 0;
 
     // Returns 0 for "not representable" — a valid sentinel because no real
     // constant-buffer element has zero stride.

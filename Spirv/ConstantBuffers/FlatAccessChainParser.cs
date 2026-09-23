@@ -52,18 +52,27 @@ internal static class FlatAccessChainParser
             return false;
         }
 
-        // Everything past the register slot must be a literal index — a dynamic
-        // component index cannot be resolved against a named member, and letting
-        // one through would produce an access chain addressing the wrong depth.
+        // Everything past the register slot must resolve to a literal index — a
+        // genuinely dynamic component cannot be resolved against a named member, and
+        // letting one through would produce an access chain addressing the wrong
+        // depth. A computed index whose value is fixed (`floatIndex & 3` over a
+        // register-aligned stride) is a literal in everything but spelling.
         var extraIndices = new List<int>();
         for (int operand = slotIndex + 1; operand < instruction.WordCount; operand++)
         {
-            if (!constants.TryGetValue(instruction[operand], out uint value))
+            if (constants.TryGetValue(instruction[operand], out uint value))
+            {
+                extraIndices.Add(checked((int)value));
+                continue;
+            }
+
+            if (!SlotExpressionDecomposer.TryParse(instruction[operand], constants, definitions, out SlotExpression component)
+                || !component.IsStatic)
             {
                 return false;
             }
 
-            extraIndices.Add(checked((int)value));
+            extraIndices.Add(component.ConstantRegisterOffset);
         }
 
         accessPath = new FlatAccessPath { Slot = slot, ExtraIndices = extraIndices };

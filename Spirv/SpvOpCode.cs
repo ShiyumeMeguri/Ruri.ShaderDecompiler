@@ -110,6 +110,7 @@ public static class SpvOpCode
     public const ushort OpISub = 130;
     public const ushort OpIMul = 132;
     public const ushort OpShiftRightLogical = 194;
+    public const ushort OpShiftRightArithmetic = 195;
     public const ushort OpShiftLeftLogical = 196;
     public const ushort OpBitwiseOr = 197;
     public const ushort OpBitwiseAnd = 199;
