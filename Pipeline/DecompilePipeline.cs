@@ -77,7 +77,7 @@ internal sealed class DecompilePipeline
             stage = DecompileStage.SourceEmission;
             EntryPointSelection entry = EntryPointResolver.Resolve(injected, symbols.EntryPoint);
             EmitLanguage language = EmitLanguageSelector.Select(injected, entry);
-            EmissionPlan plan = BuildPlan(language, entry, shaderModel, format, frontend.InputSignature, flattened);
+            EmissionPlan plan = BuildPlan(language, entry, shaderModel, frontend.InputSignature, options.VertexInputs, flattened);
             string source = Emit(injected, symbols, plan);
 
             result.Success = true;
@@ -220,16 +220,17 @@ internal sealed class DecompilePipeline
     ///
     /// Vertex semantics come from the container's own input signature when there
     /// is one. A bare SPIR-V input has no signature — it carries only locations,
-    /// which Unity assigned in its fixed attribute order, so that order is the
-    /// semantic. System values are skipped: the backend already emits their
-    /// built-in semantic and a remap would only collide with it.
+    /// numbered over the inputs the shader declares, so which channel a location is
+    /// is the engine's binding and arrives in <see cref="DecompileOptions.VertexInputs"/>.
+    /// System values are skipped: the backend already emits their built-in semantic
+    /// and a remap would only collide with it.
     /// </summary>
     private static EmissionPlan BuildPlan(
         EmitLanguage language,
         EntryPointSelection entry,
         uint shaderModel,
-        ShaderBinaryFormat format,
         IReadOnlyList<InputSignatureElement> signature,
+        IReadOnlyList<VertexInputBinding>? vertexInputs,
         List<FlattenedBlock> flattened)
     {
         var plan = new EmissionPlan { Language = language, EntryPoint = entry, ShaderModel = shaderModel };
@@ -257,9 +258,12 @@ internal sealed class DecompilePipeline
                 plan.VertexAttributes.Add(new VertexAttributeSemantic(element.Register, element.SemanticName + element.SemanticIndex));
             }
         }
-        else if (format == ShaderBinaryFormat.SpirV)
+        else if (vertexInputs is not null)
         {
-            UnityVertexAttributeOrder.AppendAll(plan.VertexAttributes);
+            foreach (VertexInputBinding input in vertexInputs)
+            {
+                plan.VertexAttributes.Add(new VertexAttributeSemantic(input.Location, input.Semantic));
+            }
         }
 
         return plan;

@@ -56,6 +56,9 @@ public enum DecompileStage
     Completed,
 }
 
+/// <summary>One vertex input: the location it arrives at and the semantic it declares (<c>TEXCOORD0</c>).</summary>
+public readonly record struct VertexInputBinding(uint Location, string Semantic);
+
 /// <summary>
 /// Engine-agnostic decompile settings.
 ///
@@ -77,6 +80,16 @@ public sealed class DecompileOptions
 
     /// <summary>Target shader model for the source backend.</summary>
     public uint ShaderModel { get; init; } = 51;
+
+    /// <summary>
+    /// The semantic of each vertex input location, as the engine that built the program
+    /// states it. A SPIR-V module keeps only locations; which mesh channel feeds each one is
+    /// the engine's binding (Unity's per-program bind channels), not something the module or
+    /// a fixed table can answer -- a shader that declares a position and one uv puts that uv
+    /// at location 1, the slot a fixed attribute order calls NORMAL. Without it a bare SPIR-V
+    /// vertex stage keeps the backend's default semantics rather than a guessed name.
+    /// </summary>
+    public IReadOnlyList<VertexInputBinding>? VertexInputs { get; init; }
 
     /// <summary>
     /// Escape hatch invoked after constant-buffer structuring and BEFORE symbol
