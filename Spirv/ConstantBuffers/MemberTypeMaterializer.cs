@@ -48,7 +48,7 @@ internal static class MemberTypeMaterializer
         // expressed with either HLSL packing layout or packoffset".
         int stride = shape.Kind switch
         {
-            MemberShapeKind.Struct => shape.StructByteSize,
+            MemberShapeKind.Struct => shape.StructElementStride,
             MemberShapeKind.Matrix => shape.Columns * 16,
             _ => 16,
         };
@@ -182,7 +182,9 @@ internal static class MemberTypeMaterializer
             BlockMemberLayout child = children[childIndex];
             string name = string.IsNullOrWhiteSpace(child.Name)
                 ? $"{GeneratedNames.StrippedSymbol}_{child.ByteOffset}"
-                : child.Name;
+                : child.Name == LayoutGapFiller.PlaceholderName
+                    ? $"{LayoutGapFiller.PlaceholderName}_at_{child.ByteOffset}"
+                    : child.Name;
 
             module.InsertDebugMemberName(structTypeId, (uint)childIndex, name);
         }

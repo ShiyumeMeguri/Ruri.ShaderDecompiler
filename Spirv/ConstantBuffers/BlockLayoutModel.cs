@@ -52,6 +52,13 @@ internal sealed class MemberShape
     /// <summary>Byte size of ONE struct element.</summary>
     public int StructByteSize { get; set; }
 
+    /// <summary>
+    /// Distance between consecutive elements of a struct array. HLSL cbuffer rule:
+    /// every array element starts on a 16-byte register boundary whatever its size,
+    /// so a four-byte struct still advances a whole register per element.
+    /// </summary>
+    public int StructElementStride => ((StructByteSize + 15) / 16) * 16;
+
     public string StructName { get; set; } = string.Empty;
 }
 
@@ -104,7 +111,7 @@ internal sealed class BlockMemberLayout
     /// </summary>
     public int SpanBytes => Shape.Kind switch
     {
-        MemberShapeKind.Struct => Shape.StructByteSize * Math.Max(Shape.ArrayLength, 1),
+        MemberShapeKind.Struct => Shape.StructElementStride * Math.Max(Shape.ArrayLength, 1),
         MemberShapeKind.Matrix => Shape.Columns * 16 * Math.Max(Shape.ArrayLength, 1),
         _ => Shape.DeclaredByteSize,
     };

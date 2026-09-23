@@ -97,7 +97,7 @@ internal static class AccessTranslator
 
         if (shape.Kind == MemberShapeKind.Struct)
         {
-            int end = start + (shape.StructByteSize * Math.Max(shape.ArrayLength, 1));
+            int end = start + (shape.StructElementStride * Math.Max(shape.ArrayLength, 1));
             return absoluteByteOffset >= start && absoluteByteOffset < end;
         }
 
@@ -242,7 +242,7 @@ internal static class AccessTranslator
 
         int localByteOffset = (absoluteRegister * 16) + (componentIndex * 4) - member.ByteOffset;
         int arrayLength = Math.Max(shape.ArrayLength, 1);
-        int elementSize = Math.Max(shape.StructByteSize, 1);
+        int elementSize = Math.Max(shape.StructElementStride, 16);
         int elementIndex = localByteOffset / elementSize;
         int elementLocalByteOffset = localByteOffset % elementSize;
 
@@ -360,7 +360,7 @@ internal static class AccessTranslator
                 continue;
             }
 
-            int elementRegisterStride = Math.Max(1, (shape.StructByteSize + 15) / 16);
+            int elementRegisterStride = Math.Max(1, shape.StructElementStride / 16);
             int localRegisterOffset = path.Slot.ConstantRegisterOffset - member.RegisterOffset;
 
             if (localRegisterOffset < 0 || localRegisterOffset >= elementRegisterStride

@@ -111,7 +111,12 @@ internal static class BlockLayoutBuilder
         {
             childEnd = Math.Max(childEnd, ReferencedByteEnd(child));
         }
-        return member.ByteOffset + childEnd;
+
+        // Every element before the last is in use whole; only the last one's
+        // trailing padding is left out. Counting a single element instead puts
+        // the tail filler on top of element 1 of a struct array.
+        int precedingElements = Math.Max(member.Shape.ArrayLength, 1) - 1;
+        return member.ByteOffset + (precedingElements * member.Shape.StructElementStride) + childEnd;
     }
 
     private static bool IsExplicitPadding(BlockMemberLayout member)
@@ -190,6 +195,14 @@ internal static class BlockLayoutBuilder
 
         children.Sort(static (left, right) => left.ByteOffset.CompareTo(right.ByteOffset));
 
+        // The engine packed this struct by HLSL rules: a vector that would straddle
+        // a register starts at the next one, leaving a hole after the scalars before
+        // it. Emitters re-derive a struct's size by summing members WITHOUT that
+        // rule, so an implicit hole makes the derived array stride disagree with the
+        // real one and the whole buffer is refused. Holes made explicit keep the
+        // byte layout exactly as compiled and leave nothing to re-derive.
+        LayoutGapFiller.FillInteriorGaps(children);
+
         int elementSize = children.Max(static c => c.ByteOffset + c.SpanBytes);
         int arrayLength = Math.Max(symbol.ArraySize, 1);
 
@@ -200,8 +213,8 @@ internal static class BlockLayoutBuilder
             StructByteSize = elementSize,
             StructMembers = children,
             ArrayLength = arrayLength,
-            DeclaredByteSize = arrayLength * elementSize,
         };
+        shape.DeclaredByteSize = arrayLength * shape.StructElementStride;
 
         return new BlockMemberLayout
         {
@@ -209,7 +222,7 @@ internal static class BlockLayoutBuilder
             ByteOffset = symbol.Index,
             Shape = shape,
             RegisterOffset = symbol.Index / 16,
-            RegisterCount = Math.Max(1, ((shape.StructByteSize * arrayLength) + 15) / 16),
+            RegisterCount = Math.Max(1, shape.DeclaredByteSize / 16),
         };
     }
 
