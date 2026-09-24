@@ -137,6 +137,32 @@ public class SerializedProgramData
         return fallbackSetId;
     }
 
+    // The name the descriptor-set table gives the binding of this kind at
+    // `(setId, bindingIndex)`, or null when the table has no such binding or
+    // leaves it unnamed. Unlike GetSetIdFor this never falls back to another
+    // set's binding: it answers for exactly the slot asked about.
+    public string? NameOfSetBinding(int setId, int bindingIndex, ShaderResourceType kind)
+    {
+        int wireType = (int)ClassifyDescriptorBindingType(kind);
+        foreach (DescriptorSetParameter set in DescriptorSetParameters)
+        {
+            if (set.SetId != setId)
+            {
+                continue;
+            }
+            foreach (SetBinding binding in set.Bindings)
+            {
+                if (binding.BindingIndex == bindingIndex && binding.DescriptorType == wireType
+                    && !string.IsNullOrEmpty(binding.Name))
+                {
+                    return binding.Name;
+                }
+            }
+        }
+
+        return null;
+    }
+
     // Add or update a descriptor-set entry for `(setId, bindingIndex, kind)`.
     // Used by hooks that decode packed binding indices (see
     // EndfieldShaderBindingHook.DecodePackedBindPoint) and need to write the

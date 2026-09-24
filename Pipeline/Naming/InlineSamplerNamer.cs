@@ -2,34 +2,26 @@
 namespace Ruri.ShaderTools.Pipeline.Naming;
 
 /// <summary>
-/// Synthesises sampler names a host shader importer will accept.
+/// Names each sampler binding after what it really samples with, in a form a host shader importer parses back to
+/// that same thing:
 ///
-/// Engine symbol tables usually leave samplers unnamed and express the link the
-/// other way round — each texture records which sampler slot it is read through.
-/// Meanwhile a host importer rejects arbitrary sampler names outright
-/// ("Unrecognized sampler 'sampler_N' — does not match any texture and is not a
-/// recognized inline name"), so a name has to be MANUFACTURED, and it has to
-/// follow one of the two forms the importer parses:
+///   * an inline sampler -- a Unity program's <c>m_Samplers</c> entry states its filter, wrap and comparison -- is
+///     named by that state: <c>sampler_LinearRepeat</c>, <c>sampler_TrilinearClamp</c>,
+///     <c>sampler_LinearClampCompare</c> (see <see cref="InlineSamplerState"/>);
+///   * a texture's own sampler -- the texture's <c>m_SamplerIndex</c> names the slot -- takes that texture's import
+///     settings, and is named <c>sampler&lt;TextureName&gt;</c>, the form that inherits them;
+///   * a sampler the symbol table states nothing about -- an Unreal table carries a bind index where Unity keeps
+///     the state -- gets the next unused filter+wrap form from <see cref="Pool"/>, because a host importer rejects
+///     any other name outright ("Unrecognized sampler 'sampler_N'"). Such a name records no state.
 ///
-///   * <c>sampler&lt;TextureName&gt;</c>   — inherits that texture's import settings
-///   * <c>sampler&lt;Filter&gt;&lt;Wrap&gt;</c> — a static sampler with the named state
-///
-/// The combined form used here — <c>sampler_LinearRepeat_Normal</c> — satisfies
-/// the filter+wrap parser AND records the texture association, so the emitted
-/// source stays self-documenting.
-///
-/// Any name the symbol table DID supply is overridden. Reflection-derived names
-/// like <c>sampler_3</c> are accurate at the bytecode level and rejected by the
-/// importer, so accuracy loses to acceptability here.
+/// Two slots that come out under one name are kept apart by their set and binding, which the importer still
+/// parses.
 /// </summary>
 internal sealed class InlineSamplerNamer
 {
     /// <summary>
-    /// Filter × wrap combinations a host importer parses verbatim to build static
-    /// sampler state. Walked in order, so the first unpaired sampler gets the
-    /// safest default and later ones move down the list — which also guarantees
-    /// distinct names, since identical ones would be uniquified by the emitter
-    /// into forms the importer then rejects.
+    /// Filter × wrap combinations a host importer parses verbatim, handed out in order to the samplers whose
+    /// state the symbol table does not state.
     /// </summary>
     private static readonly string[] Pool =
     {
@@ -49,20 +41,51 @@ internal sealed class InlineSamplerNamer
 
     private readonly HashSet<string> _used = new(StringComparer.Ordinal);
 
-    /// <summary>
-    /// Name for one sampler binding: the next unused inline form, plus the paired
-    /// texture's name when the symbols link one.
-    /// </summary>
+    /// <summary>Name for one sampler binding.</summary>
     public string Next(int set, int binding, SerializedProgramData symbols)
     {
-        string inlineName = NextInline();
-        _used.Add(inlineName);
-
-        string? pairedTexture = PairedTextureSuffix(set, binding, symbols);
-        return pairedTexture is null ? inlineName : $"{inlineName}_{pairedTexture}";
+        string name = TruthfulName(set, binding, symbols) ?? NextPooled();
+        if (!_used.Add(name))
+        {
+            name = $"{name}_s{set}_b{binding}";
+            _used.Add(name);
+        }
+        return name;
     }
 
-    private string NextInline()
+    /// <summary>
+    /// What the symbol table says sits in this slot. The candidates are every inline sampler state stated for
+    /// the binding number and every texture whose own sampler it is. A table with descriptor sets keeps a slot's
+    /// set only in its set bindings, so there the set binding's own name picks the candidate -- the Unity
+    /// decoding writes it from the program's own lists, before any names are shared between programs. A table
+    /// without sets has one register space, where one binding number is one slot and two different candidates
+    /// for it are refused.
+    /// </summary>
+    private static string? TruthfulName(int set, int binding, SerializedProgramData symbols)
+    {
+        string[] candidates = symbols.SamplerParameters
+            .Where(sampler => sampler.InlineState is not null && sampler.BindPoint == binding)
+            .Select(sampler => sampler.InlineState!.Name)
+            .Concat(symbols.TextureParameters
+                .Where(texture => texture.SamplerIndex == binding && !string.IsNullOrWhiteSpace(texture.Name))
+                .Select(texture => "sampler" + texture.Name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (symbols.DescriptorSetParameters.Count > 0)
+        {
+            string? declared = symbols.NameOfSetBinding(set, binding, ShaderResourceType.Sampler);
+            return declared is not null && candidates.Contains(declared, StringComparer.Ordinal) ? declared : null;
+        }
+        return candidates.Length switch
+        {
+            0 => null,
+            1 => candidates[0],
+            _ => throw new InvalidDataException(
+                $"sampler register {binding} is stated as {string.Join(" and ", candidates)} at once."),
+        };
+    }
+
+    private string NextPooled()
     {
         foreach (string candidate in Pool)
         {
@@ -72,8 +95,8 @@ internal sealed class InlineSamplerNamer
             }
         }
 
-        // Past the pool — twelve distinct unpaired samplers in one shader. The
-        // anisotropic variants are also recognised, so keep growing there.
+        // Past the pool -- twelve distinct unstated samplers in one shader. The anisotropic variants are also
+        // recognised, so keep growing there.
         for (int aniso = 2; aniso <= 16; aniso *= 2)
         {
             foreach (string filterWrap in Pool)
@@ -86,50 +109,8 @@ internal sealed class InlineSamplerNamer
             }
         }
 
-        // Beyond that, give up on recognisability but keep uniqueness: the
-        // importer will still complain, but about a count rather than about a
-        // silent collision.
+        // Beyond that, give up on recognisability but keep uniqueness: the importer will still complain, but
+        // about a count rather than about a silent collision.
         return $"sampler_LinearClamp_overflow_{_used.Count}";
-    }
-
-    /// <summary>
-    /// Name of the texture read through this sampler slot, WITHOUT the
-    /// <c>sampler_</c> prefix the caller supplies.
-    ///
-    /// Only when EXACTLY ONE texture targets the slot. A shared sampler has no
-    /// single texture to be named after, and picking one anyway produces a name
-    /// that actively lies: a reader meeting
-    /// <c>_NormalMap.Sample(sampler_LinearClamp_OffsetTex, …)</c> reasonably
-    /// concludes the two are related when the suffix merely names whichever
-    /// texture happened to sort first. A shared sampler keeps the bare inline
-    /// form, which is the honest description of what it is.
-    /// </summary>
-    private static string? PairedTextureSuffix(int set, int binding, SerializedProgramData symbols)
-    {
-        TextureParameter? only = null;
-
-        foreach (TextureParameter texture in symbols.TextureParameters)
-        {
-            if (texture.SamplerIndex != binding
-                || string.IsNullOrWhiteSpace(texture.Name)
-                || symbols.GetSetIdFor(texture.Index, ShaderResourceType.Texture) != set)
-            {
-                continue;
-            }
-
-            if (only is not null)
-            {
-                return null;   // shared — no one texture owns this sampler
-            }
-
-            only = texture;
-        }
-
-        if (only is null)
-        {
-            return null;
-        }
-
-        return only.Name.StartsWith('_') ? only.Name[1..] : only.Name;
     }
 }

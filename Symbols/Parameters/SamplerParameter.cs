@@ -23,4 +23,9 @@ public sealed record class SamplerParameter
     // "sampler_<BindPoint>". Engine-UB-bound samplers get a placeholder
     // ("View_Sampler39"); loose samplers stay null.
     public string? Name { get; set; }
+
+    // The state an inline sampler declares, decoded from a Unity program's
+    // m_Samplers entry. Null where the symbol table states none: an Unreal
+    // table, whose Sampler field carries a bind index instead.
+    public InlineSamplerState? InlineState { get; set; }
 }
