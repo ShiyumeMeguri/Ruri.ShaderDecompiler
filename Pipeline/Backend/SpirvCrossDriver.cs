@@ -170,6 +170,16 @@ internal sealed unsafe class SpirvCrossDriver
     /// Unity will never bind. Refusing here turns a renders-wrong shader into a
     /// failure that names the exact member and the spelling that was looked for,
     /// so the naming path that lost it can be found instead of guessed at.
+    ///
+    /// The members are renamed in plan order, each rename acting on the text the
+    /// ones before it left -- a member's own name can be what a later member's
+    /// joined identifier spells. Every spelling involved is an identifier, so a
+    /// rename changes what a token says and never where tokens begin and end: the
+    /// text is split into tokens once, each rename moves every token currently
+    /// saying one spelling over to the next, and the text is written once at the
+    /// end. Rewriting the whole text for every member was a copy of it per member,
+    /// hundreds of members over a shader of a hundred kilobytes, and the largest
+    /// single cost of emitting source.
     /// </summary>
     private static string? RestoreAuthoredMembers(Compiler* compiler, ref string text, IReadOnlyList<FlattenedBlock> blocks)
     {
@@ -178,14 +188,15 @@ internal sealed unsafe class SpirvCrossDriver
             return null;
         }
 
-        StringBuilder builder = new(text.Length);
-
+        List<Rename> renames = new();
+        string? unnamed = null;
         foreach (FlattenedBlock block in blocks)
         {
             string variable = ReadName(Api.CompilerGetName(compiler, block.VariableId));
             if (variable.Length == 0)
             {
-                return $"Planned constant-buffer variable {block.VariableId} lost its name in the backend.";
+                unnamed = $"Planned constant-buffer variable {block.VariableId} lost its name in the backend.";
+                break;
             }
 
             foreach (uint member in block.AuthoredMembers)
@@ -193,74 +204,174 @@ internal sealed unsafe class SpirvCrossDriver
                 string name = ReadName(Api.CompilerGetMemberName(compiler, block.StructTypeId, member));
                 if (name.Length == 0)
                 {
-                    return $"Planned member {member} of constant buffer '{variable}' lost its name in the backend.";
+                    unnamed = $"Planned member {member} of constant buffer '{variable}' lost its name in the backend.";
+                    break;
                 }
 
                 string flattened = HlslIdentifier.CollapseUnderscores(variable + "_" + name);
-                if (!ContainsWholeToken(text, flattened))
+                if (!IsIdentifier(flattened) || !IsIdentifier(name))
                 {
-                    return $"Planned constant-buffer member did not land in the emitted HLSL: {variable}.{name} (looked for '{flattened}').";
+                    unnamed = $"Planned constant-buffer member is spelled as no identifier by the backend: {variable}.{name} (joined '{flattened}').";
+                    break;
                 }
 
-                text = ReplaceWholeToken(text, flattened, name, builder);
+                renames.Add(new Rename(variable, name, flattened));
+            }
+
+            if (unnamed is not null)
+            {
+                break;
             }
         }
 
+        TokenGroups groups = TokenGroups.Of(text, renames);
+        foreach (Rename rename in renames)
+        {
+            if (!groups.Move(rename.Flattened, rename.Name))
+            {
+                return $"Planned constant-buffer member did not land in the emitted HLSL: {rename.Variable}.{rename.Name} (looked for '{rename.Flattened}').";
+            }
+        }
+
+        if (unnamed is not null)
+        {
+            return unnamed;
+        }
+
+        text = groups.Write(text);
         return null;
     }
 
     private static string ReadName(byte* utf8)
         => utf8 == null ? string.Empty : Marshal.PtrToStringUTF8((IntPtr)utf8) ?? string.Empty;
 
-    private static bool ContainsWholeToken(string text, string token)
+    private static bool IsIdentifier(string spelling)
     {
-        int index = text.IndexOf(token, StringComparison.Ordinal);
-        while (index >= 0)
+        foreach (char c in spelling)
         {
-            if (IsWholeTokenAt(text, index, token.Length))
+            if (!IsIdentifierCharacter(c))
             {
-                return true;
+                return false;
             }
-
-            index = text.IndexOf(token, index + 1, StringComparison.Ordinal);
         }
 
-        return false;
-    }
-
-    private static string ReplaceWholeToken(string text, string token, string replacement, StringBuilder builder)
-    {
-        int index = text.IndexOf(token, StringComparison.Ordinal);
-        if (index < 0)
-        {
-            return text;
-        }
-
-        builder.Clear();
-        int cursor = 0;
-
-        while (index >= 0)
-        {
-            int after = index + token.Length;
-            builder.Append(text, cursor, index - cursor);
-            builder.Append(IsWholeTokenAt(text, index, token.Length) ? replacement : token);
-            cursor = after;
-
-            index = text.IndexOf(token, cursor, StringComparison.Ordinal);
-        }
-
-        builder.Append(text, cursor, text.Length - cursor);
-        return builder.ToString();
-    }
-
-    private static bool IsWholeTokenAt(string text, int index, int length)
-    {
-        bool boundedBefore = index == 0 || !IsIdentifierCharacter(text[index - 1]);
-        int after = index + length;
-        bool boundedAfter = after >= text.Length || !IsIdentifierCharacter(text[after]);
-        return boundedBefore && boundedAfter;
+        return spelling.Length > 0;
     }
 
     private static bool IsIdentifierCharacter(char c)
         => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+
+    private readonly record struct Rename(string Variable, string Name, string Flattened);
+
+    /// <summary>
+    /// The tokens of a text that a list of renames can reach, grouped by what they
+    /// first said, and what each group says now. A token no rename's joined
+    /// identifier spells is never reached: a rename only acts on a token that
+    /// currently says its joined identifier, and a token starts saying something
+    /// else only by being renamed.
+    /// </summary>
+    private sealed class TokenGroups
+    {
+        private readonly List<(int Start, int Length, int Group)> occurrences = new();
+        private readonly List<string> said = new();
+        private readonly Dictionary<string, List<int>> groupsSaying = new(StringComparer.Ordinal);
+
+        public static TokenGroups Of(string text, List<Rename> renames)
+        {
+            TokenGroups groups = new();
+            Dictionary<string, int> groupOf = new(StringComparer.Ordinal);
+            foreach (Rename rename in renames)
+            {
+                groupOf.TryAdd(rename.Flattened, -1);
+            }
+
+            Dictionary<string, int>.AlternateLookup<ReadOnlySpan<char>> lookup = groupOf.GetAlternateLookup<ReadOnlySpan<char>>();
+            ReadOnlySpan<char> characters = text.AsSpan();
+            int cursor = 0;
+            while (cursor < characters.Length)
+            {
+                if (!IsIdentifierCharacter(characters[cursor]))
+                {
+                    cursor++;
+                    continue;
+                }
+
+                int start = cursor;
+                while (cursor < characters.Length && IsIdentifierCharacter(characters[cursor]))
+                {
+                    cursor++;
+                }
+
+                ReadOnlySpan<char> token = characters[start..cursor];
+                if (!lookup.TryGetValue(token, out int group))
+                {
+                    continue;
+                }
+
+                if (group < 0)
+                {
+                    group = groups.said.Count;
+                    string spelling = token.ToString();
+                    groupOf[spelling] = group;
+                    groups.said.Add(spelling);
+                    groups.groupsSaying.Add(spelling, [group]);
+                }
+
+                groups.occurrences.Add((start, cursor - start, group));
+            }
+
+            return groups;
+        }
+
+        /// <summary>Every token saying <paramref name="from"/> now says <paramref name="to"/>; false when none says it.</summary>
+        public bool Move(string from, string to)
+        {
+            if (!groupsSaying.TryGetValue(from, out List<int>? moving))
+            {
+                return false;
+            }
+
+            if (string.Equals(from, to, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            groupsSaying.Remove(from);
+            foreach (int group in moving)
+            {
+                said[group] = to;
+            }
+
+            if (groupsSaying.TryGetValue(to, out List<int>? already))
+            {
+                already.AddRange(moving);
+            }
+            else
+            {
+                groupsSaying.Add(to, moving);
+            }
+
+            return true;
+        }
+
+        public string Write(string text)
+        {
+            if (occurrences.Count == 0)
+            {
+                return text;
+            }
+
+            StringBuilder builder = new(text.Length);
+            int cursor = 0;
+            foreach ((int start, int length, int group) in occurrences)
+            {
+                builder.Append(text, cursor, start - cursor);
+                builder.Append(said[group]);
+                cursor = start + length;
+            }
+
+            builder.Append(text, cursor, text.Length - cursor);
+            return builder.ToString();
+        }
+    }
 }
