@@ -100,17 +100,22 @@ internal static class BlockTypeEmitStage
 
     private static void EmitDebugNames(SpirvModule module, BlockRewritePlan plan)
     {
-        module.InsertDebugName(plan.NewStructTypeId, StructTypeAlias(plan.Name));
-        module.InsertDebugName(plan.Block.VariableId, VariablePlaceholder(plan.Name));
+        List<SpirvInstruction> names = new(2 + plan.Layout.Members.Count)
+        {
+            SpirvDebugNames.CreateName(module, plan.NewStructTypeId, StructTypeAlias(plan.Name)),
+            SpirvDebugNames.CreateName(module, plan.Block.VariableId, VariablePlaceholder(plan.Name)),
+        };
 
         for (int memberIndex = 0; memberIndex < plan.Layout.Members.Count; memberIndex++)
         {
             string name = plan.Layout.Members[memberIndex].Name;
             if (!string.IsNullOrWhiteSpace(name))
             {
-                module.InsertDebugMemberName(plan.NewStructTypeId, (uint)memberIndex, name);
+                names.Add(SpirvDebugNames.CreateMemberName(module, plan.NewStructTypeId, (uint)memberIndex, name));
             }
         }
+
+        module.InsertDebugNames(names);
     }
 
     /// <summary>Struct-type alias. The dot is sanitised to <c>_</c> on emit, so

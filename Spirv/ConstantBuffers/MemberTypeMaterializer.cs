@@ -163,9 +163,10 @@ internal static class MemberTypeMaterializer
         }
         module.AppendType(module.CreateInstruction(SpvOpCode.OpTypeStruct, structWords));
 
+        List<SpirvInstruction> names = new(1 + children.Count);
         if (!string.IsNullOrWhiteSpace(member.Name))
         {
-            module.InsertDebugName(structTypeId, member.Name);
+            names.Add(SpirvDebugNames.CreateName(module, structTypeId, member.Name));
         }
 
         // Every child is named, including the ones the symbols left blank.
@@ -186,9 +187,13 @@ internal static class MemberTypeMaterializer
                     ? $"{LayoutGapFiller.PlaceholderName}_at_{child.ByteOffset}"
                     : child.Name;
 
-            module.InsertDebugMemberName(structTypeId, (uint)childIndex, name);
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(SpirvDebugNames.CreateMemberName(module, structTypeId, (uint)childIndex, name));
+            }
         }
 
+        module.InsertDebugNames(names);
         member.ResolvedTypeId = structTypeId;
         return structTypeId;
     }

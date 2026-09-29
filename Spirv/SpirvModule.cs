@@ -308,6 +308,29 @@ public sealed class SpirvModule
     /// section — where every newly synthesized type / constant belongs.</summary>
     public void AppendType(SpirvInstruction instruction) => Instructions.Insert(FindTypeSectionEndIndex(), instruction);
 
+    /// <summary>
+    /// What <see cref="AppendType"/> does called once per constant, in the order
+    /// given, as one insertion. A constant is no type, so the anchor does not move
+    /// past it: each lands where the one before it landed, ahead of it, and the
+    /// run ends up in reverse order. One call per constant moved every instruction
+    /// after the types — the function bodies — once per constant.
+    /// </summary>
+    public void AppendConstants(IReadOnlyList<SpirvInstruction> constants)
+    {
+        SpirvInstruction[] reversed = new SpirvInstruction[constants.Count];
+        for (int i = 0; i < constants.Count; i++)
+        {
+            if (SpvOpCode.IsTypeDeclaration(constants[i].OpCode))
+            {
+                throw new ArgumentException($"{nameof(AppendConstants)} was handed a type declaration (opcode {constants[i].OpCode}), which moves the anchor it relies on.", nameof(constants));
+            }
+
+            reversed[constants.Count - 1 - i] = constants[i];
+        }
+
+        Instructions.InsertRange(FindTypeSectionEndIndex(), reversed);
+    }
+
     /// <summary>Insert at the head of the decoration run preceding the type
     /// section. Consecutive calls land in REVERSE call order; that ordering is
     /// part of the emitted byte layout, so do not "fix" it.</summary>
@@ -352,6 +375,26 @@ public sealed class SpirvModule
         }
 
         Instructions.Insert(FindDebugInsertionIndex(), SpirvDebugNames.CreateMemberName(this, typeId, memberIndex, name));
+    }
+
+    /// <summary>
+    /// What <see cref="InsertDebugName"/> and <see cref="InsertDebugMemberName"/>
+    /// do called once per name, in the order given, as one insertion. A name moves
+    /// the debug anchor past itself, so consecutive names land in call order right
+    /// where the first one lands. One call per name moved every instruction after
+    /// the names — decorations, types, function bodies — once per member.
+    /// </summary>
+    public void InsertDebugNames(IReadOnlyList<SpirvInstruction> names)
+    {
+        foreach (SpirvInstruction name in names)
+        {
+            if (name.OpCode != SpvOpCode.OpName && name.OpCode != SpvOpCode.OpMemberName)
+            {
+                throw new ArgumentException($"{nameof(InsertDebugNames)} was handed opcode {name.OpCode}, which does not move the debug anchor it relies on.", nameof(names));
+            }
+        }
+
+        Instructions.InsertRange(FindDebugInsertionIndex(), names);
     }
 }
 

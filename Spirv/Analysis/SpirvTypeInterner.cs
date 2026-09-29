@@ -296,4 +296,40 @@ internal sealed class SpirvTypeInterner
         _constants[(uintTypeId, value)] = id;
         return id;
     }
+
+    /// <summary>
+    /// The constants 0 through <paramref name="last"/>, indexed by value: the ids,
+    /// the order they are minted in and the module they leave are what calling
+    /// <see cref="InternUIntConstant"/> for each value in turn gives, with the new
+    /// ones inserted together.
+    /// </summary>
+    public uint[] InternUIntConstantRange(int last)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(last);
+        uint uintTypeId = EnsureUInt();
+        uint[] ids = new uint[last + 1];
+        List<SpirvInstruction> minted = new();
+        for (int index = 0; index <= last; index++)
+        {
+            uint value = (uint)index;
+            if (_constants.TryGetValue((uintTypeId, value), out uint existing) && existing != 0)
+            {
+                ids[index] = existing;
+                continue;
+            }
+
+            uint id = _module.AllocateId();
+            minted.Add(_module.CreateInstruction(SpvOpCode.OpConstant,
+                [SpvOpCode.MakeInstructionWord(SpvOpCode.OpConstant, 4), uintTypeId, id, value]));
+            _constants[(uintTypeId, value)] = id;
+            ids[index] = id;
+        }
+
+        if (minted.Count > 0)
+        {
+            _module.AppendConstants(minted);
+        }
+
+        return ids;
+    }
 }

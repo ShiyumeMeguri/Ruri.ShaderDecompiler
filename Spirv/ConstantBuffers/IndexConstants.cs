@@ -30,9 +30,10 @@ internal static class IndexConstants
             AccumulateCeiling(member, ref ceiling);
         }
 
-        for (uint value = 0; value <= (uint)ceiling; value++)
+        uint[] ids = context.Types.InternUIntConstantRange(ceiling);
+        for (int value = 0; value < ids.Length; value++)
         {
-            context.Constants.Register(context.Types.InternUIntConstant(value), value);
+            context.Constants.Register(ids[value], (uint)value);
         }
     }
 

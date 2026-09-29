@@ -77,11 +77,16 @@ internal static class AnonymousMemberNamer
             return spirv;
         }
 
+        List<SpirvInstruction> names = new(named.Count);
         foreach ((uint structTypeId, uint memberIndex, string name) in named)
         {
-            module.InsertDebugMemberName(structTypeId, memberIndex, name);
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                names.Add(SpirvDebugNames.CreateMemberName(module, structTypeId, memberIndex, name));
+            }
         }
 
+        module.InsertDebugNames(names);
         return module.ToBytes();
     }
 
