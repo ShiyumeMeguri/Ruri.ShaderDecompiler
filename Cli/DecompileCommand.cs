@@ -21,6 +21,7 @@ internal static class DecompileCommand
             ShaderModel = command.ShaderModel,
             DebugDumpDirectory = command.DebugDumpDirectory,
             DebugDumpStem = command.DebugDumpDirectory is null ? null : Path.GetFileNameWithoutExtension(command.InputPath),
+            KeepIntermediates = command.DebugDumpDirectory is not null,
         });
 
         if (command.DebugDumpDirectory is not null)

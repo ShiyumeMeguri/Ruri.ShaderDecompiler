@@ -113,6 +113,17 @@ public sealed class DecompileOptions
 
     /// <summary>File-name prefix for the dump.</summary>
     public string? DebugDumpStem { get; init; }
+
+    /// <summary>
+    /// Whether the result carries what the run passed through on its way to the source -- the
+    /// SPIR-V after every stage and the structuring log -- for a caller that inspects them.
+    ///
+    /// Unstated, the result carries the source and the symbols and nothing the run only needed
+    /// for itself. A batch caller that writes the source never reads the rest, and three SPIR-V
+    /// copies of a shader outweigh its source: over one archive's 3,706 shaders they came to
+    /// 404 MB against 253 MB of source, held for every shader the batch had not yet written.
+    /// </summary>
+    public bool KeepIntermediates { get; init; }
 }
 
 /// <summary>
@@ -144,12 +155,13 @@ public enum PipelineStage
 }
 
 /// <summary>
-/// Outcome of one decompile, including — on failure — every intermediate needed
-/// to diagnose it offline.
+/// Outcome of one decompile: the source and the symbols it was named from, and -- on
+/// failure -- the stage it stopped at and why.
 ///
-/// The per-stage SPIR-V snapshots are populated on SUCCESS TOO, so a caller can
-/// diff stages of a shader that decompiled but decompiled wrongly. That is the
-/// more common failure in practice than an outright crash.
+/// The per-stage SPIR-V snapshots and the structuring log are here when the caller stated
+/// <see cref="DecompileOptions.KeepIntermediates"/>, on SUCCESS TOO, so a caller can diff
+/// stages of a shader that decompiled but decompiled wrongly -- the more common failure in
+/// practice than an outright crash. A failure dump is written from them either way.
 /// </summary>
 public sealed class DecompileResult
 {

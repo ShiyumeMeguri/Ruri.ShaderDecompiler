@@ -75,7 +75,7 @@ public sealed class ShaderDecompiler : IDisposable
     /// Fires per completion, ON A WORKER THREAD. Serialise any external state
     /// yourself.
     /// </param>
-    /// <param name="maxConcurrency">Hard ceiling on concurrent jobs. ≤ 0 → processor count × 2.</param>
+    /// <param name="maxConcurrency">Hard ceiling on concurrent jobs. ≤ 0 → processor count.</param>
     /// <param name="cpuUsageCapPercent">Stop admitting work above this system CPU usage.</param>
     public DecompileResult[] Decompile(
         IReadOnlyList<(byte[] Binary, DecompileOptions Options)> requests,
@@ -102,8 +102,42 @@ public sealed class ShaderDecompiler : IDisposable
             return results;
         }
 
-        ShaderDecompileBatch.Run(requests, results, onProgress, maxConcurrency, cpuUsageCapPercent, cancellationToken);
+        ShaderDecompileBatch.Run(requests, (index, result) =>
+        {
+            results[index] = result;
+            onProgress?.Invoke(index, result);
+        }, maxConcurrency, cpuUsageCapPercent, cancellationToken);
         return results;
+    }
+
+    /// <summary>
+    /// Decompile a sequence of shaders, handing each result over the moment it exists and
+    /// keeping none of them.
+    ///
+    /// The sequence is read in order on the calling thread, only as fast as the workers drain
+    /// it, so it may prepare each request as it is read. Nothing here holds a result once it is
+    /// handed over, so a batch of any size runs in the memory of the work in flight plus
+    /// whatever the caller keeps -- where the array overload necessarily keeps every result
+    /// until the last one is in.
+    /// </summary>
+    /// <param name="requests">Read once, in order, on the calling thread.</param>
+    /// <param name="onResult">
+    /// The request's position in the sequence and its result, ON A WORKER THREAD. An exception
+    /// thrown here stops the batch and is rethrown to the caller.
+    /// </param>
+    /// <param name="maxConcurrency">Hard ceiling on concurrent jobs. ≤ 0 → processor count.</param>
+    /// <param name="cpuUsageCapPercent">Stop admitting work above this system CPU usage.</param>
+    public void DecompileEach(
+        IEnumerable<(byte[] Binary, DecompileOptions Options)> requests,
+        Action<int, DecompileResult> onResult,
+        int maxConcurrency = 0,
+        int cpuUsageCapPercent = DefaultCpuCapPercent,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        ArgumentNullException.ThrowIfNull(onResult);
+
+        ShaderDecompileBatch.Run(requests, onResult, maxConcurrency, cpuUsageCapPercent, cancellationToken);
     }
 
     public void Dispose()

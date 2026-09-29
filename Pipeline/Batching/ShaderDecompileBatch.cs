@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 
 namespace Ruri.ShaderTools.Pipeline.Batching;
 
@@ -14,13 +15,21 @@ namespace Ruri.ShaderTools.Pipeline.Batching;
 /// Work is pulled from one queue rather than partitioned up front, because
 /// per-shader cost varies by orders of magnitude and a static split leaves most
 /// workers idle behind one pathological shader.
+///
+/// The queue is fed from the caller's sequence while the workers drain it, and never holds
+/// more than a couple of requests per worker, so a sequence that prepares each request as it
+/// is read runs ahead of the workers by exactly that much. Each result goes to the caller the
+/// moment it exists and is kept nowhere here: what a batch occupies is the work in flight and
+/// whatever the caller chooses to keep, never the batch.
 /// </summary>
 internal static class ShaderDecompileBatch
 {
+    /// <summary>How many requests wait in the queue per worker, so none of them starves while the sequence prepares the next.</summary>
+    private const int QueuedPerWorker = 2;
+
     public static void Run(
-        IReadOnlyList<(byte[] Binary, DecompileOptions Options)> requests,
-        DecompileResult[] results,
-        Action<int, DecompileResult>? onProgress,
+        IEnumerable<(byte[] Binary, DecompileOptions Options)> requests,
+        Action<int, DecompileResult> onResult,
         int maxConcurrency,
         int cpuUsageCapPercent,
         CancellationToken cancellationToken)
@@ -29,89 +38,103 @@ internal static class ShaderDecompileBatch
         // per core only made them take turns.
         int workerCount = maxConcurrency > 0 ? maxConcurrency : Math.Max(1, Environment.ProcessorCount);
 
-        var queue = new BlockingCollection<int>(boundedCapacity: requests.Count);
-        for (int i = 0; i < requests.Count; i++)
-        {
-            queue.Add(i);
-        }
-        queue.CompleteAdding();
-
+        using var queue = new BlockingCollection<(int Index, byte[] Binary, DecompileOptions Options)>(workerCount * QueuedPerWorker);
         using var gate = new CpuAdmissionGate(workerCount, cpuUsageCapPercent, cancellationToken);
+        using var halt = CancellationTokenSource.CreateLinkedTokenSource(gate.MonitorToken);
 
         var workers = new Task[workerCount];
         for (int i = 0; i < workerCount; i++)
         {
-            workers[i] = Task.Run(() => Work(requests, results, queue, gate, onProgress, gate.MonitorToken), CancellationToken.None);
+            workers[i] = Task.Run(() => Work(queue, gate, onResult, halt), CancellationToken.None);
         }
 
+        ExceptionDispatchInfo? feedFailure = Feed(requests, queue, halt);
+        Task.WaitAll(workers, cancellationToken);
+        feedFailure?.Throw();
+    }
+
+    /// <summary>
+    /// The caller's sequence into the queue, in order, on the calling thread. A sequence that
+    /// throws stops the workers and is rethrown once they are gone; a worker that throws stops
+    /// the sequence, and the wait for the workers reports it.
+    /// </summary>
+    private static ExceptionDispatchInfo? Feed(
+        IEnumerable<(byte[] Binary, DecompileOptions Options)> requests,
+        BlockingCollection<(int Index, byte[] Binary, DecompileOptions Options)> queue,
+        CancellationTokenSource halt)
+    {
         try
         {
-            Task.WaitAll(workers, cancellationToken);
+            int index = 0;
+            foreach ((byte[] binary, DecompileOptions options) in requests)
+            {
+                queue.Add((index++, binary, options), halt.Token);
+            }
+            return null;
+        }
+        catch (OperationCanceledException) when (halt.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception exception)
+        {
+            halt.Cancel();
+            return ExceptionDispatchInfo.Capture(exception);
         }
         finally
         {
-            queue.Dispose();
+            queue.CompleteAdding();
         }
     }
 
     private static void Work(
-        IReadOnlyList<(byte[] Binary, DecompileOptions Options)> requests,
-        DecompileResult[] results,
-        BlockingCollection<int> queue,
+        BlockingCollection<(int Index, byte[] Binary, DecompileOptions Options)> queue,
         CpuAdmissionGate gate,
-        Action<int, DecompileResult>? onProgress,
-        CancellationToken cancellationToken)
+        Action<int, DecompileResult> onResult,
+        CancellationTokenSource halt)
     {
         using var decompiler = new ShaderDecompiler();
 
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            int index;
-            try
+            foreach ((int index, byte[] binary, DecompileOptions options) in queue.GetConsumingEnumerable(halt.Token))
             {
-                if (!queue.TryTake(out index, Timeout.Infinite, cancellationToken))
+                if (!gate.Acquire(halt.Token))
                 {
                     return;
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (InvalidOperationException)
-            {
-                return;   // queue completed and drained
-            }
 
-            if (!gate.Acquire(cancellationToken))
-            {
-                return;
-            }
-
-            DecompileResult result;
-            try
-            {
-                (byte[] binary, DecompileOptions options) = requests[index];
-                result = decompiler.Decompile(binary, options);
-            }
-            catch (Exception exception)
-            {
-                // A worker must never take the batch down with it — one broken
-                // shader out of thousands is a result, not a crash.
-                result = new DecompileResult
+                DecompileResult result;
+                try
                 {
-                    Success = false,
-                    ErrorMessage = $"Worker exception: {exception}",
-                    FailedStage = DecompileStage.NotStarted,
-                };
-            }
-            finally
-            {
-                gate.Release();
-            }
+                    result = decompiler.Decompile(binary, options);
+                }
+                catch (Exception exception)
+                {
+                    // A worker must never take the batch down with it — one broken
+                    // shader out of thousands is a result, not a crash.
+                    result = new DecompileResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"Worker exception: {exception}",
+                        FailedStage = DecompileStage.NotStarted,
+                    };
+                }
+                finally
+                {
+                    gate.Release();
+                }
 
-            results[index] = result;
-            onProgress?.Invoke(index, result);
+                onResult(index, result);
+            }
+        }
+        catch (OperationCanceledException) when (halt.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            halt.Cancel();
+            throw;
         }
     }
 }

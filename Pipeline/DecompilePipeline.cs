@@ -88,12 +88,32 @@ internal sealed class DecompilePipeline
             result.Stage = entry.Stage;
             result.FinalSpirv = injected;
             result.StructuringLog = _structurer.LastRewriteSummary;
-            return result;
+            return Handed(result, options);
         }
         catch (Exception exception)
         {
-            return Fail(result, stage, exception, binary, options, symbols);
+            return Handed(Fail(result, stage, exception, binary, options, symbols), options);
         }
+    }
+
+    /// <summary>
+    /// The result as the caller receives it. The stage snapshots and the structuring log served
+    /// this run -- a failure dump is written from them -- and stay on the result only for a
+    /// caller that stated it inspects them.
+    /// </summary>
+    private static DecompileResult Handed(DecompileResult result, DecompileOptions options)
+    {
+        if (options.KeepIntermediates)
+        {
+            return result;
+        }
+
+        result.SpirvAfterFrontend = null;
+        result.SpirvAfterStructuring = null;
+        result.SpirvAfterSymbolInjection = null;
+        result.FinalSpirv = null;
+        result.StructuringLog = null;
+        return result;
     }
 
     // Each wrapper below exists so the thrown message names the stage AND carries
