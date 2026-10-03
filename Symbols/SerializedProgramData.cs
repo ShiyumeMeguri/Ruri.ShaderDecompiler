@@ -17,7 +17,7 @@ namespace Ruri.ShaderTools;
 //   m_Samplers               → SamplerParameters
 //
 // Custom Ruri additions (NOT in Unity's ProgramParameters):
-//   DescriptorSetParameters  Vulkan descriptor-set decoder output (Endfield hook)
+//   DescriptorSetParameters  the engine's Vulkan descriptor-set table (m_DescriptorSetParams of a fork)
 //   EntryPoint               main-function name fed to spirv-cross
 //   DebugName                debug label for failure dumps
 //   UsedMaterials            UE-only: list of materials referencing this shader
@@ -33,11 +33,12 @@ public class SerializedProgramData
     public List<SamplerParameter> SamplerParameters { get; set; } = new();
 
     // Mirrors a Vulkan-only Unity extension (m_DescriptorSetParams) that some
-    // proprietary engines (Endfield) emit. Single source of truth for
-    // descriptor-set membership: per-resource records (BufferBindingParameter /
-    // TextureParameter / SamplerParameter / UAVParameter) hold the binding
-    // slot, the set id is recovered from here by matching
-    // (BindingIndex, DescriptorType).
+    // proprietary engine forks emit: the engine's own table of every
+    // descriptor slot, which it binds resources through by name. Single source
+    // of truth for descriptor-set membership: per-resource records
+    // (BufferBindingParameter / TextureParameter / SamplerParameter /
+    // UAVParameter) hold the binding slot, the set id is recovered from here by
+    // the resource's name at that binding, else by (BindingIndex, DescriptorType).
     public List<DescriptorSetParameter> DescriptorSetParameters { get; set; } = new();
     public string EntryPoint { get; set; } = "main";
     public string? DebugName { get; set; }
@@ -116,14 +117,13 @@ public class SerializedProgramData
                 {
                     continue;
                 }
-                if (descriptorType != DescriptorBindingType.Unknown && binding.DescriptorType != wireType)
-                {
-                    continue;
-                }
-
                 if (!string.IsNullOrEmpty(name) && string.Equals(binding.Name, name, StringComparison.Ordinal))
                 {
                     return set.SetId;
+                }
+                if (descriptorType != DescriptorBindingType.Unknown && binding.DescriptorType != wireType)
+                {
+                    continue;
                 }
 
                 if (!foundFallback)
@@ -210,19 +210,21 @@ public class SerializedProgramData
             or ShaderResourceType.Texture3D
             or ShaderResourceType.TextureCube
             or ShaderResourceType.TextureCubeArray
-            or ShaderResourceType.Texture2DMS
-            or ShaderResourceType.Buffer
+            or ShaderResourceType.Texture2DMS => DescriptorBindingType.SampledImage,
+        ShaderResourceType.Buffer
             or ShaderResourceType.StructuredBuffer
-            or ShaderResourceType.ByteAddressBuffer => DescriptorBindingType.SampledImage,
-        ShaderResourceType.UAV
-            or ShaderResourceType.RWBuffer
+            or ShaderResourceType.ByteAddressBuffer
+            or ShaderResourceType.UAV
             or ShaderResourceType.RWStructuredBuffer
             or ShaderResourceType.RWByteAddressBuffer
             or ShaderResourceType.StorageBuffer => DescriptorBindingType.StorageBuffer,
+        ShaderResourceType.RWBuffer => DescriptorBindingType.StorageTexelBuffer,
         ShaderResourceType.RWTexture2D
             or ShaderResourceType.RWTexture2DArray
             or ShaderResourceType.RWTexture3D
             or ShaderResourceType.StorageImage => DescriptorBindingType.StorageImage,
+        ShaderResourceType.InputAttachment => DescriptorBindingType.InputAttachment,
+        ShaderResourceType.RaytracingAccelerationStructure => DescriptorBindingType.AccelerationStructure,
         _ => DescriptorBindingType.Unknown,
     };
 

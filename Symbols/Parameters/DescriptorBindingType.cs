@@ -1,17 +1,22 @@
 namespace Ruri.ShaderTools;
 
-// The integer stored in SetBinding.DescriptorType. Mirrors Unity's wire-level
-// enum for m_DescriptorType (Vulkan-flavoured). Lookups inside the C# layer go
-// through the SerializedProgramData helpers — callers shouldn't depend on the
-// numeric value directly. The enum is kept compact (only the kinds the
-// shader-symbol layer actually classifies) rather than mirroring every Vulkan
-// VK_DESCRIPTOR_TYPE_* constant; values that aren't classified land as Unknown.
+// The integer stored in SetBinding.DescriptorType: the engine writes
+// m_DescriptorType as the VkDescriptorType of the slot, so the values are
+// Vulkan's own. Unknown is outside Vulkan's range and only ever asks a lookup
+// not to filter by type.
 public enum DescriptorBindingType
 {
-    Unknown = 0,
-    Sampler = 1,
+    Unknown = -1,
+    Sampler = 0,
+    CombinedImageSampler = 1,
     SampledImage = 2,
     StorageImage = 3,
-    UniformBuffer = 4,
-    StorageBuffer = 5,
+    UniformTexelBuffer = 4,
+    StorageTexelBuffer = 5,
+    UniformBuffer = 6,
+    StorageBuffer = 7,
+    UniformBufferDynamic = 8,
+    StorageBufferDynamic = 9,
+    InputAttachment = 10,
+    AccelerationStructure = 1000150000,
 }
