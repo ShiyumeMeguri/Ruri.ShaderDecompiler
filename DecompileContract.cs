@@ -44,8 +44,8 @@ public enum DecompileStage
     /// <summary>Flat constant buffers rewritten into named block members.</summary>
     ConstantBufferStructuring,
 
-    /// <summary>Host callback enriching symbols with SPIR-V-derived facts.</summary>
-    SymbolEnrichment,
+    /// <summary>Host binders stating naming facts with the module in hand.</summary>
+    SymbolBinding,
 
     /// <summary>Recovered names written into the module's debug section.</summary>
     SymbolInjection,
@@ -92,17 +92,10 @@ public sealed class DecompileOptions
     public IReadOnlyList<VertexInputBinding>? VertexInputs { get; init; }
 
     /// <summary>
-    /// Escape hatch invoked after constant-buffer structuring and BEFORE symbol
-    /// injection, with the structured SPIR-V (read-only) and the symbol table to
-    /// mutate in place.
-    ///
-    /// It exists for symbol facts that can only be derived WITH SPIR-V context —
-    /// inferring a texture's name from the sampled-image pair it forms with an
-    /// already-named sampler, for instance, which is unanswerable from engine
-    /// data alone. Name injection itself still happens inside the pipeline; this
-    /// is purely for accumulating symbols.
+    /// The host's binders, run in order after constant-buffer structuring and before symbol injection
+    /// (<see cref="Binding.IModuleSymbolBinder"/>). Empty runs the universal route unchanged.
     /// </summary>
-    public Action<byte[], SerializedProgramData>? SymbolEnricher { get; init; }
+    public IReadOnlyList<Binding.IModuleSymbolBinder> SymbolBinders { get; init; } = Array.Empty<Binding.IModuleSymbolBinder>();
 
     /// <summary>
     /// When set, a failed decompile writes every intermediate artifact here:
@@ -185,7 +178,7 @@ public sealed class DecompileResult
     public byte[]? SpirvAfterFrontend { get; set; }
 
     /// <summary>After constant-buffer structuring. This is what
-    /// <see cref="DecompileOptions.SymbolEnricher"/> sees.</summary>
+    /// <see cref="DecompileOptions.SymbolBinders"/> read.</summary>
     public byte[]? SpirvAfterStructuring { get; set; }
 
     /// <summary>After symbol injection — the module handed to the source backend.</summary>

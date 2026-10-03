@@ -1,3 +1,4 @@
+using Ruri.ShaderTools.Binding;
 using Ruri.ShaderTools.Pipeline.Backend;
 using Ruri.ShaderTools.Pipeline.Diagnostics;
 using Ruri.ShaderTools.Pipeline.Frontend;
@@ -15,7 +16,7 @@ namespace Ruri.ShaderTools.Pipeline;
 ///
 /// <code>
 ///   binary → SPIR-V → scalar-layout normalise → structure constant buffers
-///          → [host symbol enrichment] → inject symbols → plan emission → emit HLSL
+///          → [host binders] → inject symbols → plan emission → emit HLSL
 /// </code>
 ///
 /// Every step is engine-agnostic. Engine knowledge enters only through the
@@ -67,11 +68,11 @@ internal sealed class DecompilePipeline
             byte[] structured = Structure(spirv, symbols);
             result.SpirvAfterStructuring = structured;
 
-            stage = DecompileStage.SymbolEnrichment;
-            Enrich(options, structured, symbols);
+            stage = DecompileStage.SymbolBinding;
+            List<BoundMemberName> bound = Bind(options, structured, symbols);
 
             stage = DecompileStage.SymbolInjection;
-            (byte[] injected, List<FlattenedBlock> flattened) = Inject(structured, symbols);
+            (byte[] injected, List<FlattenedBlock> flattened) = Inject(structured, symbols, bound);
             result.SpirvAfterSymbolInjection = injected;
 
             stage = DecompileStage.SourceEmission;
@@ -135,24 +136,30 @@ internal sealed class DecompilePipeline
         }
     }
 
-    private static void Enrich(DecompileOptions options, byte[] structured, SerializedProgramData symbols)
+    private static List<BoundMemberName> Bind(DecompileOptions options, byte[] structured, SerializedProgramData symbols)
     {
-        if (options.SymbolEnricher is null)
+        var bound = new List<BoundMemberName>();
+        if (options.SymbolBinders.Count == 0)
         {
-            return;
+            return bound;
         }
 
-        try
+        ModuleLayout layout = ModuleLayout.Read(Spirv.SpirvModule.Parse(structured));
+        foreach (IModuleSymbolBinder binder in options.SymbolBinders)
         {
-            options.SymbolEnricher(structured, symbols);
+            try
+            {
+                binder.Bind(layout, symbols, bound);
+            }
+            catch (Exception exception)
+            {
+                throw new InvalidOperationException($"{binder.GetType().Name} failed: {exception.Message}", exception);
+            }
         }
-        catch (Exception exception)
-        {
-            throw new InvalidOperationException($"SymbolEnricher threw: {exception.Message}", exception);
-        }
+        return bound;
     }
 
-    private (byte[] Spirv, List<FlattenedBlock> Flattened) Inject(byte[] spirv, SerializedProgramData symbols)
+    private (byte[] Spirv, List<FlattenedBlock> Flattened) Inject(byte[] spirv, SerializedProgramData symbols, List<BoundMemberName> bound)
     {
         try
         {
@@ -162,16 +169,17 @@ internal sealed class DecompilePipeline
             spirv = AnonymousMemberNamer.Apply(spirv);
 
             var flattened = new List<FlattenedBlock>();
-            if (symbols.GetResourceBindingCount() == 0)
+            var names = new List<NamePatch>();
+            var members = new List<MemberNamePatch>();
+            if (symbols.GetResourceBindingCount() != 0)
             {
-                return (spirv, flattened);
+                List<DescriptorBindingInfo> bindings = BindingScanner.Scan(spirv);
+                names = new ResourceNamePlanner(_structurer.GetResolvedBlockName).Plan(bindings, symbols);
+                members = new BlockMemberNamePlanner(_structurer.GetResolvedBlockName).Plan(bindings, symbols);
+                CollectFlattenedBlocks(bindings, names, members, flattened);
             }
 
-            List<DescriptorBindingInfo> bindings = BindingScanner.Scan(spirv);
-            List<NamePatch> names = new ResourceNamePlanner(_structurer.GetResolvedBlockName).Plan(bindings, symbols);
-            List<MemberNamePatch> members = new BlockMemberNamePlanner(_structurer.GetResolvedBlockName).Plan(bindings, symbols);
-
-            CollectFlattenedBlocks(bindings, names, members, flattened);
+            AppendBound(members, bound);
             return (DebugNameInjector.Inject(spirv, names, members), flattened);
         }
         catch (Exception exception)
@@ -181,6 +189,35 @@ internal sealed class DecompilePipeline
                 $"{ModuleReports.DescribePatchPlan(spirv, symbols, _structurer.GetResolvedBlockName)}{Environment.NewLine}" +
                 $"{ModuleReports.DescribeBuiltInDecorations(spirv)}",
                 exception);
+        }
+    }
+
+    /// <summary>
+    /// The binders' names join the planners' as one injection. A member both name must get the same name; two binders
+    /// naming one member differently is the same error.
+    /// </summary>
+    private static void AppendBound(List<MemberNamePatch> members, List<BoundMemberName> bound)
+    {
+        var named = new Dictionary<(uint StructType, uint Member), string>();
+        foreach (MemberNamePatch planned in members)
+        {
+            named.TryAdd((planned.StructTypeId, planned.MemberIndex), planned.Name);
+        }
+
+        foreach (BoundMemberName name in bound)
+        {
+            if (named.TryGetValue((name.StructType, name.Member), out string? earlier))
+            {
+                if (!string.Equals(earlier, name.Name, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"member {name.Member} of struct {name.StructType} is named both '{earlier}' and '{name.Name}'");
+                }
+                continue;
+            }
+
+            named[(name.StructType, name.Member)] = name.Name;
+            members.Add(new MemberNamePatch(name.StructType, name.Member, name.Name));
         }
     }
 
