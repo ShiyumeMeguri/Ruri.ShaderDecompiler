@@ -319,13 +319,9 @@ internal static class AccessTranslator
             }
 
             int elementRegisterStride = DynamicElementRegisterStride(member);
-            if (elementRegisterStride != path.Slot.DynamicIndexStride)
-            {
-                continue;
-            }
-
             int localRegisterOffset = path.Slot.ConstantRegisterOffset - member.RegisterOffset;
-            if (localRegisterOffset < 0 || localRegisterOffset >= elementRegisterStride)
+            if (localRegisterOffset < 0 || localRegisterOffset >= member.RegisterCount
+                || !TryElementIndex(path.Slot, elementRegisterStride, localRegisterOffset, constants, out uint elementIndexId, out DerivedIndex? derived, out int elementRegister))
             {
                 continue;
             }
@@ -336,7 +332,7 @@ internal static class AccessTranslator
             }
 
             AccessTranslation? inner = TranslateDynamicArrayMember(
-                member, localRegisterOffset, componentIndex, path.ExtraIndices, path.Slot.DynamicIndexId, constants);
+                member, elementRegister, componentIndex, path.ExtraIndices, elementIndexId, constants);
             if (inner is null)
             {
                 continue;
@@ -344,7 +340,7 @@ internal static class AccessTranslator
 
             var indices = new List<uint>(inner.Indices.Count + 1) { memberIndexConstantId };
             indices.AddRange(inner.Indices);
-            return new AccessTranslation { Indices = indices, MemberTypeId = inner.MemberTypeId };
+            return new AccessTranslation { Indices = indices, MemberTypeId = inner.MemberTypeId, Derived = derived };
         }
 
         // Sweep 2 — dynamic indexing into a STRUCT array, i.e.
@@ -361,10 +357,10 @@ internal static class AccessTranslator
             }
 
             int elementRegisterStride = Math.Max(1, shape.StructElementStride / 16);
-            int localRegisterOffset = path.Slot.ConstantRegisterOffset - member.RegisterOffset;
+            int memberRegisterOffset = path.Slot.ConstantRegisterOffset - member.RegisterOffset;
 
-            if (localRegisterOffset < 0 || localRegisterOffset >= elementRegisterStride
-                || elementRegisterStride != path.Slot.DynamicIndexStride)
+            if (memberRegisterOffset < 0 || memberRegisterOffset >= member.RegisterCount
+                || !TryElementIndex(path.Slot, elementRegisterStride, memberRegisterOffset, constants, out uint elementIndexId, out DerivedIndex? derived, out int localRegisterOffset))
             {
                 continue;
             }
@@ -404,15 +400,57 @@ internal static class AccessTranslator
                 var indices = new List<uint>(childTranslation.Indices.Count + 3)
                 {
                     memberIndexConstantId,
-                    path.Slot.DynamicIndexId,
+                    elementIndexId,
                     childIndexConstantId,
                 };
                 indices.AddRange(childTranslation.Indices);
-                return new AccessTranslation { Indices = indices, MemberTypeId = childTranslation.MemberTypeId };
+                return new AccessTranslation { Indices = indices, MemberTypeId = childTranslation.MemberTypeId, Derived = derived };
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The element a dynamic access reaches in an array whose element spans <paramref name="elementRegisterStride"/>
+    /// registers. The dynamic index steps whole elements when its stride is a multiple of the element's, so the element is
+    /// the dynamic index scaled by that multiple, plus the whole elements the constant part skips; the rest of the constant
+    /// part is the register within the element. Exactly the dynamic index passes through as itself; anything else becomes a
+    /// derived index at position 1 -- right after the member index -- for the rewriting stage to build.
+    /// </summary>
+    private static bool TryElementIndex(
+        SlotExpression slot,
+        int elementRegisterStride,
+        int memberRegisterOffset,
+        ConstantValueMap constants,
+        out uint elementIndexId,
+        out DerivedIndex? derived,
+        out int elementRegister)
+    {
+        elementIndexId = 0;
+        derived = null;
+        elementRegister = 0;
+        if (elementRegisterStride <= 0 || slot.DynamicIndexStride % elementRegisterStride != 0)
+        {
+            return false;
+        }
+
+        int multiplier = slot.DynamicIndexStride / elementRegisterStride;
+        int addend = memberRegisterOffset / elementRegisterStride;
+        elementRegister = memberRegisterOffset % elementRegisterStride;
+        if (multiplier == 1 && addend == 0)
+        {
+            elementIndexId = slot.DynamicIndexId;
+            return true;
+        }
+
+        if (!constants.TryGetId((uint)multiplier, out uint multiplierConstantId) || !constants.TryGetId((uint)addend, out uint addendConstantId))
+        {
+            return false;
+        }
+
+        derived = new DerivedIndex(1, slot.DynamicIndexId, multiplier, multiplierConstantId, addend, addendConstantId);
+        return true;
     }
 
     private static int DynamicElementRegisterStride(BlockMemberLayout member)

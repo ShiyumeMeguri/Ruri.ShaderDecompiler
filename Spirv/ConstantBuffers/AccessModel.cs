@@ -73,7 +73,22 @@ internal sealed class AccessTranslation
 {
     public List<uint> Indices { get; set; } = new();
     public uint MemberTypeId { get; set; }
+    public DerivedIndex? Derived { get; set; }
 }
+
+/// <summary>
+/// An element index no id holds yet: <c>DynamicIndexId * Multiplier + Addend</c>, standing at <see cref="Position"/> of
+/// the translation's indices. A flat access can stride over an array in whole multiples of its element -- eight registers
+/// per light into a float4 array -- so the element it reaches is the dynamic index scaled, plus the elements the constant
+/// part skips. Both constants are among those declared up front, so building the index mints none.
+/// </summary>
+internal readonly record struct DerivedIndex(
+    int Position,
+    uint DynamicIndexId,
+    int Multiplier,
+    uint MultiplierConstantId,
+    int Addend,
+    uint AddendConstantId);
 
 /// <summary>
 /// An access chain the retarget stage has taken ownership of.

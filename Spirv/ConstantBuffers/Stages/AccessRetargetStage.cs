@@ -127,6 +127,7 @@ internal static class AccessRetargetStage
                 continue;
             }
 
+            i += DerivedIndexEmitter.Emit(context, instructions, i, translation);
             WriteChain(instruction, pointerTypeId, translation.Indices);
 
             retargeted[instruction[2]] = new RetargetedChain

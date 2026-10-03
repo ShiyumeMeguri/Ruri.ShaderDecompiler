@@ -106,6 +106,7 @@ internal static class ComponentReadLoweringStage
             uint pointerResultId = context.Module.AllocateId();
             ushort chainOpCode = load.AccessChain.InstructionOpCode;
 
+            index += DerivedIndexEmitter.Emit(context, instructions, index, translation);
             instructions.Insert(index, BuildChain(context.Module, chainOpCode, pointerTypeId, pointerResultId,
                 load.AccessChain.BaseVariableId, translation.Indices));
 
