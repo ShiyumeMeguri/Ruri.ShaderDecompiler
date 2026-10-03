@@ -118,8 +118,8 @@ public sealed class ModuleShape
     /// <summary>
     /// True when <paramref name="variableId"/> is the exact shape a compiled
     /// constant buffer takes on the way out of dxil-spirv: a Uniform-storage
-    /// variable whose struct has a single fixed-length array member. Reports the
-    /// array's element count.
+    /// variable whose struct has a single member, a flat register array
+    /// (<see cref="TryGetRegisterArray"/>). Reports the array's element count.
     /// </summary>
     public bool TryGetUniformBlockArrayLength(uint variableId, out int arrayLength)
     {
@@ -129,14 +129,32 @@ public sealed class ModuleShape
             && pointer.StorageClass == StorageClass.Uniform
             && StructMembers.TryGetValue(pointer.TypeId, out uint[]? members)
             && members.Length == 1
-            && ArrayTypes.TryGetValue(members[0], out (uint ElementTypeId, uint LengthId) array)
-            && Constants.TryGetValue(array.LengthId, out uint length)
-            && TrySetLength(length, out arrayLength);
-
-        static bool TrySetLength(uint value, out int length)
-        {
-            length = checked((int)value);
-            return true;
-        }
+            && TryGetRegisterArray(members[0], out _, out arrayLength);
     }
+
+    /// <summary>
+    /// True when <paramref name="arrayTypeId"/> is a flat register space: a
+    /// fixed-length array of four-component vectors, one constant register per
+    /// element. An array of structures, scalars or narrower vectors is a layout
+    /// the compiler already stated -- it has no flat registers to translate from,
+    /// whatever its stride.
+    /// </summary>
+    public bool TryGetRegisterArray(uint arrayTypeId, out uint elementTypeId, out int arrayLength)
+    {
+        elementTypeId = 0;
+        arrayLength = 0;
+        if (!ArrayTypes.TryGetValue(arrayTypeId, out (uint ElementTypeId, uint LengthId) array)
+            || !Constants.TryGetValue(array.LengthId, out uint length)
+            || !VectorShapes.TryGetValue(array.ElementTypeId, out (uint ComponentTypeId, uint ComponentCount) vector)
+            || vector.ComponentCount != RegisterComponentCount)
+        {
+            return false;
+        }
+
+        elementTypeId = array.ElementTypeId;
+        arrayLength = checked((int)length);
+        return true;
+    }
+
+    private const uint RegisterComponentCount = 4;
 }

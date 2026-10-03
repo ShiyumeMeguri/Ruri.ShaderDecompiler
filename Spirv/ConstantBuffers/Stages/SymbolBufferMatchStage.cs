@@ -66,10 +66,9 @@ internal static class SymbolBufferMatchStage
             }
 
             uint arrayTypeId = wrapperMembers[0];
-            if (!context.Shape.ArrayTypes.TryGetValue(arrayTypeId, out (uint ElementTypeId, uint LengthId) array)
-                || !context.Shape.Constants.TryGetValue(array.LengthId, out uint arrayLength))
+            if (!context.Shape.TryGetRegisterArray(arrayTypeId, out uint elementTypeId, out int arrayLength))
             {
-                context.Note($"[{binding.Name}] wrapper member is not a fixed array type");
+                context.Note($"[{binding.Name}] wrapper member is not a fixed array of four-component registers");
                 continue;
             }
 
@@ -79,8 +78,8 @@ internal static class SymbolBufferMatchStage
                 PointerTypeId = pointerTypeId,
                 StructTypeId = pointer.TypeId,
                 ArrayTypeId = arrayTypeId,
-                ElementTypeId = array.ElementTypeId,
-                ArrayLength = checked((int)arrayLength),
+                ElementTypeId = elementTypeId,
+                ArrayLength = arrayLength,
                 ArrayStride = context.Shape.ArrayStrides.TryGetValue(arrayTypeId, out uint stride) ? checked((int)stride) : 16,
                 Binding = new SymbolBlockBinding { Name = binding.Name, Binding = binding.Index, Set = set },
                 Symbol = symbol,
