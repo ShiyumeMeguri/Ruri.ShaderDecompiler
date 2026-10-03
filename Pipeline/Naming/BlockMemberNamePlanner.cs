@@ -48,29 +48,34 @@ internal sealed class BlockMemberNamePlanner
                     continue;
                 }
 
-                string blockName = _resolveBlockName(resource.Set, resource.Binding) ?? resource.Name;
-                ConstantBufferParameter? block = symbols.GetConstantBufferByName(blockName);
+                string? structuredName = _resolveBlockName(resource.Set, resource.Binding);
+                ConstantBufferParameter? block = symbols.GetConstantBufferByName(structuredName ?? resource.Name);
                 if (block is null)
                 {
                     continue;
                 }
 
-                PlanBlock(binding, block, patches);
+                PlanBlock(binding, block, structuredName is not null, patches);
             }
         }
 
         return patches;
     }
 
-    private static void PlanBlock(DescriptorBindingInfo binding, ConstantBufferParameter block, List<MemberNamePatch> patches)
+    private static void PlanBlock(DescriptorBindingInfo binding, ConstantBufferParameter block, bool structured, List<MemberNamePatch> patches)
     {
         uint structTypeId = binding.StructTypeId!.Value;
         List<NumericShaderParameter> allNumeric = FlattenNumericMembers(block);
 
+        // A block the structurer rewrote holds one member per field it placed, however few of the stated fields the
+        // module's span reaches -- a program that reads only the first registers of a buffer declares only those, and its
+        // one member is the field that starts there. Its members are named by offset below; the two single-member readings
+        // that follow are about the compiler's own flat wrapper, which only an unstructured block still is.
+        //
         // A single SPIR-V member that is a run of 4x4 matrices is the legitimate
         // "the whole block is one transform array" case — name it after all of
         // them joined.
-        if (binding.StructMemberCount == 1 && allNumeric.Count > 0 && AllAre4x4Matrices(allNumeric))
+        if (!structured && binding.StructMemberCount == 1 && allNumeric.Count > 0 && AllAre4x4Matrices(allNumeric))
         {
             string joined = HlslIdentifier.Sanitize(string.Join("_", allNumeric.Select(static p => p.Name ?? string.Empty)));
             patches.Add(new MemberNamePatch(structTypeId, 0u, string.IsNullOrEmpty(joined) ? HlslIdentifier.PlaceholderAt(0) : joined));
@@ -88,7 +93,7 @@ internal sealed class BlockMemberNamePlanner
         // registers. That is a confidently WRONG name, which is worse than a
         // missing one — so say what actually happened instead: the block is
         // unstructured and this member is the whole buffer.
-        if (binding.StructMemberCount == 1 && DistinctFieldOffsetCount(block) > 1)
+        if (!structured && binding.StructMemberCount == 1 && DistinctFieldOffsetCount(block) > 1)
         {
             patches.Add(new MemberNamePatch(structTypeId, 0u, HlslIdentifier.UnstructuredBlockName));
             return;
