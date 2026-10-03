@@ -156,30 +156,25 @@ internal static class SlotExpressionDecomposer
             return true;
         }
 
+        // A constant factor scales the whole affine form of the other operand, which may itself be strided:
+        // `((i << 4) * 16)` is `i * 256`, not an opaque `(i << 4)` with stride 16 -- read that way, the element
+        // index of a struct array never surfaces and the access cannot be placed on a member.
         if ((opCode == SpvOpCode.OpIMul || opCode == SpvOpCode.OpShiftLeftLogical) && definition.WordCount >= 5)
         {
             uint left = definition[3];
             uint right = definition[4];
 
-            if (constants.TryGetValue(right, out uint rightConst))
+            if (constants.TryGetValue(right, out uint rightConst)
+                && TryScale(definitions, constants, left, ComputeStride(opCode, rightConst), out dynamicIndexId, out dynamicStride, out constantOffset))
             {
-                int stride = ComputeStride(opCode, rightConst);
-                if (stride > 0)
-                {
-                    dynamicIndexId = left;
-                    dynamicStride = stride;
-                    constantOffset = 0;
-                    return true;
-                }
+                return true;
             }
 
             if (opCode == SpvOpCode.OpIMul
                 && constants.TryGetValue(left, out uint leftConst)
-                && leftConst > 0 && leftConst <= int.MaxValue)
+                && leftConst <= int.MaxValue
+                && TryScale(definitions, constants, right, (int)leftConst, out dynamicIndexId, out dynamicStride, out constantOffset))
             {
-                dynamicIndexId = right;
-                dynamicStride = (int)leftConst;
-                constantOffset = 0;
                 return true;
             }
 
@@ -189,6 +184,36 @@ internal static class SlotExpressionDecomposer
         dynamicIndexId = valueId;
         dynamicStride = 1;
         constantOffset = 0;
+        return true;
+    }
+
+    private static bool TryScale(
+        ResultIdTable definitions,
+        ConstantValueMap constants,
+        uint valueId,
+        int factor,
+        out uint dynamicIndexId,
+        out int dynamicStride,
+        out int constantOffset)
+    {
+        dynamicIndexId = 0;
+        dynamicStride = 0;
+        constantOffset = 0;
+        if (factor <= 0 || !TryDecompose(definitions, constants, valueId, out uint index, out int stride, out int offset))
+        {
+            return false;
+        }
+
+        long scaledStride = (long)stride * factor;
+        long scaledOffset = (long)offset * factor;
+        if (scaledStride > int.MaxValue || scaledOffset < int.MinValue || scaledOffset > int.MaxValue)
+        {
+            return false;
+        }
+
+        dynamicIndexId = index;
+        dynamicStride = (int)scaledStride;
+        constantOffset = (int)scaledOffset;
         return true;
     }
 
