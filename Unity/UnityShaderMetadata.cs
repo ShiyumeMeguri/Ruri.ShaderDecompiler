@@ -113,6 +113,7 @@ public sealed class UnitySerializedPass
     public UnitySerializedProgram? ProgHull { get; set; }
     public UnitySerializedProgram? ProgDomain { get; set; }
     public UnitySerializedProgram? ProgRayTracing { get; set; }
+    public UnitySerializedProgram? ProgCompute { get; set; }
     public bool HasInstancingVariant { get; set; }
     public bool HasProceduralInstancingVariant { get; set; }
     public string UseName { get; set; } = string.Empty;
@@ -128,6 +129,7 @@ public sealed class UnitySerializedPass
         if (ProgHull is not null) yield return ("Hull", ProgHull);
         if (ProgDomain is not null) yield return ("Domain", ProgDomain);
         if (ProgRayTracing is not null) yield return ("RayTracing", ProgRayTracing);
+        if (ProgCompute is not null) yield return ("Compute", ProgCompute);
     }
 
     public UnitySerializedProgram? GetProgramSlot(string stage) => stage switch
@@ -138,6 +140,7 @@ public sealed class UnitySerializedPass
         "Hull" => ProgHull,
         "Domain" => ProgDomain,
         "RayTracing" => ProgRayTracing,
+        "Compute" => ProgCompute,
         _ => null,
     };
 
@@ -151,6 +154,7 @@ public sealed class UnitySerializedPass
             case "Hull": ProgHull = program; break;
             case "Domain": ProgDomain = program; break;
             case "RayTracing": ProgRayTracing = program; break;
+            case "Compute": ProgCompute = program; break;
             default: throw new ArgumentException($"Unknown shader stage: {stage}", nameof(stage));
         }
     }

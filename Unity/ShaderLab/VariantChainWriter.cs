@@ -306,6 +306,7 @@ internal static class VariantChainWriter
         "Hull" => "SHADER_STAGE_HULL",
         "Domain" => "SHADER_STAGE_DOMAIN",
         "RayTracing" => "SHADER_STAGE_RAY_TRACING",
+        "Compute" => "SHADER_STAGE_COMPUTE",
         _ => null,
     };
 
@@ -318,6 +319,7 @@ internal static class VariantChainWriter
             "Geometry" => "#pragma geometry",
             "Hull" => "#pragma hull",
             "Domain" => "#pragma domain",
+            "Compute" => "#pragma kernel",
             _ => string.Empty,
         };
 
